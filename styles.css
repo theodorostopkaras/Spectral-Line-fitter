@@ -1,0 +1,265 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #101020 0, #050509 60%, #000 100%);
+  color: #f5f5ff;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.app-shell {
+  width: 100%;
+  max-width: 1200px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.level-select {
+  display: flex;
+  gap: 8px;
+}
+
+.level-button {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #3a3a80;
+  background: #151530;
+  color: #e5e5ff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.level-button.active {
+  background: linear-gradient(135deg, #21c3ff, #8b5bff);
+  border-color: transparent;
+}
+
+.game-layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.panel {
+  background: rgba(10, 10, 30, 0.9);
+  border-radius: 12px;
+  border: 1px solid rgba(80, 80, 160, 0.6);
+  padding: 12px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.panel-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.hud-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.metric-pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(40, 40, 90, 0.8);
+  font-size: 0.75rem;
+}
+
+.hud-status {
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.plot-canvas {
+  width: 100%;
+  height: 360px;
+}
+
+.controls-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gaussian-row {
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(25, 25, 60, 0.9);
+  margin-bottom: 6px;
+}
+
+.gaussian-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.slider-group {
+  margin-bottom: 4px;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  margin-bottom: 2px;
+}
+
+.slider-label span.value {
+  opacity: 0.8;
+}
+
+.slider-input {
+  width: 100%;
+}
+
+.controls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.primary-button,
+.secondary-button {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: none;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #21c3ff, #8b5bff);
+  color: #050510;
+}
+
+.secondary-button {
+  background: transparent;
+  border: 1px solid rgba(120, 120, 200, 0.7);
+  color: #e5e5ff;
+}
+
+.fit-quality {
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.fit-quality.good {
+  color: #4ade80;
+}
+
+.fit-quality.ok {
+  color: #eab308;
+}
+
+.fit-quality.bad {
+  color: #fb7185;
+}
+
+.completion-banner {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(10, 100, 60, 0.2);
+  border: 1px solid rgba(34, 197, 94, 0.6);
+  font-size: 0.8rem;
+}
+
+.lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 0.78rem;
+}
+
+.lines-table th,
+.lines-table td {
+  border-bottom: 1px solid rgba(60, 60, 120, 0.8);
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.lines-table th {
+  font-weight: 600;
+}
+
+.unknown-label {
+  color: #f97316;
+}
+
+.error-cell {
+  text-align: right;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 5, 20, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 380px;
+  padding: 16px 18px 14px;
+  border-radius: 14px;
+  background: radial-gradient(circle at top, #1f2937 0, #020617 60%);
+  border: 1px solid rgba(129, 140, 248, 0.8);
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.75);
+}
+
+.modal-content-wide {
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+.modal-lines-table {
+  font-size: 0.75rem;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
