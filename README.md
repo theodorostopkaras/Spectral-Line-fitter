@@ -1,42 +1,91 @@
-## Spectrum Fitter (browser toy game)
+## Spectrum Fitter
 
-This is a small browser game where you fit Gaussian components to **real astronomical spectral lines**. Frequencies and molecule names are from the [Cologne Database for Molecular Spectroscopy (CDMS)](https://cdms.astro.uni-koeln.de/classic/).
+A browser-based **public outreach** mini-game: fit Gaussian components to **real astronomical spectral lines**, then **hear** those frequencies as scaled audio tones.
+
+Frequencies and molecule names come from the [Cologne Database for Molecular Spectroscopy (CDMS)](https://cdms.astro.uni-koeln.de/classic/).
+
+### Files
+
+| File | Role |
+|------|------|
+| `index.html` | Page shell (loads React, Chart.js, CSS, `main.js`) |
+| `main.js` | Game logic, levels, audio, leaderboard, UI |
+| `styles.css` | Layout and kiosk-friendly styling |
+| `cdms-qr.png` | Offline QR code linking to CDMS |
+| `README.md` | This documentation |
 
 ### How to run
 
-- **Option 1 – Open directly in a browser**
-  - Open `index.html` in a modern browser (Chrome/Edge/Firefox).
-  - Everything is loaded from CDNs, no build step or Node.js is required.
+1. Open `index.html` in a modern browser (Chrome, Edge, or Firefox).
+2. No build step or Node.js is required (React and Chart.js load from CDNs).
+3. Keep `cdms-qr.png` next to `index.html` so the QR works offline.
+
+Tip: for a public kiosk, serve the folder over `http://` (or open the file) and use fullscreen; the game returns to the attract screen after **120 seconds** of inactivity.
 
 ### How to play
 
-- At the top you can pick **Level 1–3**.
-- The blue curve is the **observed spectrum**; the green curve is your **model** (sum of Gaussians + small baseline).
-- In the right panel:
-  - Use the **\"+ Gaussian\"** button to increase the number of Gaussian components (up to the level limit).
-  - For each Gaussian you can tune:
-    - **Amplitude** (peak height),
-    - **Center (GHz)** (line frequency),
-    - **Width (sigma)** (line width).
-  - As you move sliders, the model curve updates live.
-  - The **fit quality** meter below the plot shows an approximate MSE between data and model.
-- When you are happy with the fit, click **\"Submit fit\"**.
-  - The game checks the **percent error in center frequency** for each true line against your nearest Gaussian.
-  - If all visible true lines are within **5%** in center frequency, the level is marked as **completed**.
-  - A summary table appears listing (all in **GHz**):
-    - The **frequency (GHz)** of each line,
-    - The **molecule** (e.g. HCN, CO, H2CO) and transition when known, or **Unknown line**,
-    - Your **fitted frequency (GHz)** (with the closest CDMS molecule when nearby),
-    - The **percent error** in center frequency.
+1. On the **attract screen**, read the short how-to, check the **leaderboard**, then press **Start playing**.
+2. Add Gaussian components and tune:
+   - **Amplitude** (peak height)
+   - **Center (GHz)** (line frequency)
+   - **Width / sigma** (line width)
+3. Match the green **model** to the blue **observed spectrum**.
+4. Click **Submit fit**. You pass when every true line center is within **5%**.
+5. In the congratulations box you can:
+   - See **stars**, mean error %, MSE, and fitted parameters (including audible Hz)
+   - Enter your **name** and **Save to leaderboard**
+   - **Play** each line or **Play all lines** (chord)
+   - Read **molecule facts** and open **CDMS** (link / QR)
+   - **Save as CSV**, go to the **Next level**, or **Exit**
 
-### Levels (real CDMS lines)
+### Sonification
 
-- **Level 1 – Warm-up** (86–95 GHz)
-  - 2 lines: **HCN** J=1-0 (88.63 GHz), **HCO+** J=1-0 (89.19 GHz).
-- **Level 2 – Blended** (93–102 GHz)
-  - 3 lines: **C34S** J=2-1, **CS** J=2-1 (unknown), **SO** 3(2)-2(1).
-- **Level 3 – Crowded** (217–235 GHz)
-  - 4 lines: **H2CO**, **H2CO** (unknown), **C18O** J=2-1, **13CO** J=2-1.
+Radio lines are in the **GHz** range — far above human hearing (~20 Hz–20 kHz). After a pass, fitted centers are scaled by a **single factor** into an audible band (lowest line ≈ 220 Hz) so **relative spacing** between lines is preserved.
 
-The spectrum is built from real rest frequencies; the game uses a small curated catalog of CDMS-style lines. Fitted frequencies are shown in GHz and, when close to a catalog line, the corresponding molecule is indicated.
+- Per-line **Play** and **Play all lines**
+- Header **Vol** slider and **Mute**
+- Collapsible explanation: “Why can’t I hear GHz?”
+- Audio waits for `AudioContext` resume after a user click (required by browsers)
 
+### Levels (CDMS rest frequencies)
+
+| Level | Band | Lines |
+|-------|------|--------|
+| 1 Warm-up | 86–95 GHz | HCN, HCO+ |
+| 2 Blended | 93–102 GHz | C34S, CS (unknown), SO |
+| 3 Crowded | 217–235 GHz | H2CO ×2, C18O, 13CO |
+| 4 3 mm band | 108–117 GHz | C18O, 13CO, CN (unknown), CO |
+| 5 Submm blend | 228–246 GHz | CO J=2-1, CH3OH (unknown), CS J=5-4 |
+| 6 Dense tracers | 263–282 GHz | HCN, HCO+, N2H+ (unknown) |
+
+Difficulty rises with more lines, noise, blending, and unknown species. Win rule: **≤ 5%** error on each line center frequency.
+
+### Scoring and leaderboard
+
+- **Stars** from mean percent error: ≤1% → 3★, ≤3% → 2★, ≤5% → 1★
+- **Named leaderboard** stored in the browser (`localStorage` key `spectrumFitter.leaderboard.v2`)
+- Top **5** scores **per level**, ranked by mean % error (then MSE)
+- After a pass: type a name (max 20 characters) → **Save to leaderboard**
+- On the attract screen: **Reset leaderboard** clears all scores on this device (with confirmation)
+
+Scores stay on that browser/kiosk only; there is no online server.
+
+### Outreach / kiosk features
+
+- Attract screen: *Fit the spectrum — hear the molecule*
+- Molecule fact cards after a successful fit
+- CDMS “Learn more” link + offline QR (`cdms-qr.png`)
+- Large touch-friendly buttons
+- Idle timeout (120 s) → back to attract screen
+- CSV export of fitted lines, fit parameters, errors, and audible Hz
+
+### Controls (header)
+
+- **Vol** — master volume
+- **Mute** / **Unmute**
+- **Home** — return to attract screen (during play)
+- **L1–L6** — jump between levels
+
+### Credits
+
+Line frequencies are curated from [CDMS](https://cdms.astro.uni-koeln.de/classic/) for educational use in this toy fitting game.
