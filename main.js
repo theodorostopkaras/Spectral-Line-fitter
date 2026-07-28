@@ -1,35 +1,116 @@
-// Spectrum Fitter — public outreach game (CDMS lines + sonification)
+// Spectrum Fitter — public outreach game
+// Radio rest frequencies from CDMS, solar Fraunhofer wavelengths from standard line tables.
+// Lines are emission or absorption and carry an optical depth, so strong lines saturate.
 
 /**
- * @typedef {{ amplitude: number; center: number; sigma: number; }} GaussianParams
- * @typedef {{ amplitude: number; center: number; sigma: number; knownLine: boolean; label?: string; transition?: string }} TrueLine
- * @typedef {{ id: number; amplitude: number; center: number; sigma: number }} PlayerGaussian
- * @typedef {{ id: number; name: string; xMin: number; xMax: number; noiseLevel: number; baseline: number; trueLines: TrueLine[]; maxGaussians: number; errorThresholdPercent: number }} LevelConfig
+ * @typedef {{ amplitude: number; center: number; sigma: number; tau: number }} LineParams
+ * @typedef {{ amplitude: number; center: number; sigma: number; tau: number; knownLine: boolean; graded?: boolean; label?: string; transition?: string }} TrueLine
+ * @typedef {{ id: number; amplitude: number; center: number; sigma: number; tau: number }} PlayerComponent
+ * @typedef {{ id: number; name: string; track: string; mode: "emission" | "absorption"; axis: "GHz" | "nm"; sonify: "stretch" | "ratio"; xMin: number; xMax: number; noiseLevel: number; baseline: number; trueLines: TrueLine[]; maxGaussians?: number; errorThresholdPercent: number; starBands?: number[]; allowLogY?: boolean; showSpectrumColors?: boolean; blurb?: string }} LevelConfig
  */
 
 const CDMS_URL = "https://cdms.astro.uni-koeln.de/classic/";
-const STORAGE_KEY = "spectrumFitter.leaderboard.v2";
+const STORAGE_KEY = "spectrumFitter.leaderboard.v3";
 const IDLE_MS = 120000;
-const AUDIBLE_BASE_HZ = 220;
-const AUDIBLE_MAX_HZ = 4000;
+const SPEED_OF_LIGHT_M_S = 299792458;
+/** Narrow-band outreach stretch: Hz of pitch change per 1 GHz of rest-frequency separation. */
+const SONIFY_HZ_PER_GHZ = 180;
+const AUDIBLE_MIN_HZ = 180;
+const AUDIBLE_MAX_HZ = 1800;
+/** Wide-band "ratio" rule: one constant divisor puts the whole window near this pitch. */
+const SONIFY_RATIO_CENTER_HZ = 632;
+const SONIFY_RATIO_MIN_HZ = 150;
+const SONIFY_RATIO_MAX_HZ = 4000;
+/** Star bands as fractions of a level's pass threshold, so every level scales the same way. */
+const STAR_BAND_FRACTIONS = [0.04, 0.1, 0.22, 0.5, 1.0];
+/** Below this optical depth the profile is indistinguishable from a pure Gaussian. */
+const TAU_THIN = 1e-3;
+const TAU_MIN = 0.02;
+const TAU_MAX = 30;
+const LOG_Y_FLOOR = 0.01;
 const LEADERBOARD_TOP_N = 5;
 const MAX_NAME_LEN = 20;
 
-// ——— Math ———
+const AXES = {
+  GHz: {
+    key: "GHz",
+    unit: "GHz",
+    axisTitle: "Frequency (GHz)",
+    centerLabel: "Center (GHz)",
+    decimals: 4,
+    toHz: (v) => v * 1e9,
+  },
+  nm: {
+    key: "nm",
+    unit: "nm",
+    axisTitle: "Wavelength (nm)",
+    centerLabel: "Center (nm)",
+    decimals: 3,
+    toHz: (v) => (v > 0 ? SPEED_OF_LIGHT_M_S / (v * 1e-9) : NaN),
+  },
+};
 
-function evaluateGaussian(x, p) {
-  const { amplitude, center, sigma } = p;
-  const invTwoSigma2 = 1 / (2 * sigma * sigma);
-  return x.map((xi) => amplitude * Math.exp(-(xi - center) * (xi - center) * invTwoSigma2));
+function axisOf(level) {
+  return AXES[(level && level.axis) || "GHz"] || AXES.GHz;
 }
 
-function sumGaussians(x, gaussians, baseline) {
+function axisByKey(axisKey) {
+  return AXES[axisKey || "GHz"] || AXES.GHz;
+}
+
+function formatAxisValue(value, axisKey) {
+  if (value == null || !isFinite(value)) return "—";
+  return value.toFixed(axisByKey(axisKey).decimals);
+}
+
+function isAbsorption(mode) {
+  return mode === "absorption";
+}
+
+// ——— Math ———
+
+function gaussianShape(xi, center, sigma) {
+  const d = xi - center;
+  return Math.exp(-(d * d) / (2 * sigma * sigma));
+}
+
+/**
+ * Line profile with optical thickness: tau(x) = tau * gaussian(x) and the emerging
+ * contribution is I_max * (1 - exp(-tau(x))).
+ * I_max is derived from the requested peak, so `amplitude` always means peak height (or depth)
+ * and `tau` only controls the shape: thin gives a Gaussian, thick gives a flat, saturated top.
+ */
+function evaluateLineProfile(x, p) {
+  const { amplitude, center, sigma } = p;
+  const tau = p.tau;
+  if (!(sigma > 0)) return x.map(() => 0);
+  if (!(tau > TAU_THIN)) {
+    return x.map((xi) => amplitude * gaussianShape(xi, center, sigma));
+  }
+  const imax = amplitude / (1 - Math.exp(-tau));
+  return x.map((xi) => imax * (1 - Math.exp(-tau * gaussianShape(xi, center, sigma))));
+}
+
+/** Continuum plus (emission) or minus (absorption) every line contribution. */
+function composeSpectrum(x, lines, baseline, mode) {
+  const absorb = isAbsorption(mode);
   const y = new Array(x.length).fill(baseline);
-  for (const g of gaussians) {
-    const gy = evaluateGaussian(x, g);
-    for (let i = 0; i < y.length; i++) y[i] += gy[i];
+  for (const line of lines) {
+    const contribution = evaluateLineProfile(x, line);
+    for (let i = 0; i < y.length; i++) y[i] += absorb ? -contribution[i] : contribution[i];
+  }
+  if (absorb) {
+    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
   }
   return y;
+}
+
+/** One component drawn against the continuum, so absorption components dip downwards. */
+function componentCurve(x, component, baseline, mode) {
+  const contribution = evaluateLineProfile(x, component);
+  return isAbsorption(mode)
+    ? contribution.map((v) => Math.max(0, baseline - v))
+    : contribution.map((v) => baseline + v);
 }
 
 function meanSquaredError(yTrue, yPred) {
@@ -42,6 +123,34 @@ function meanSquaredError(yTrue, yPred) {
   return s / n;
 }
 
+/**
+ * Fit quality as % of the data intensity range (RMSE / peak-to-peak × 100).
+ * Raw MSE is often tiny even for mediocre fits because intensities are ~O(1–5).
+ */
+function normalizedFitPercent(yTrue, yPred) {
+  const mse = meanSquaredError(yTrue, yPred);
+  if (!isFinite(mse)) return NaN;
+  let ymin = Infinity;
+  let ymax = -Infinity;
+  const n = Math.min(yTrue.length, yPred.length);
+  for (let i = 0; i < n; i++) {
+    const v = yTrue[i];
+    if (v < ymin) ymin = v;
+    if (v > ymax) ymax = v;
+  }
+  const range = ymax - ymin;
+  if (!(range > 0)) return NaN;
+  return (Math.sqrt(mse) / range) * 100;
+}
+
+function describeFitQuality(fitPct) {
+  if (!isFinite(fitPct)) return { label: "No fit yet", cls: "" };
+  if (fitPct < 3) return { label: "Excellent match", cls: "good" };
+  if (fitPct < 8) return { label: "Good match", cls: "good" };
+  if (fitPct < 15) return { label: "Reasonable match", cls: "ok" };
+  return { label: "Poor match", cls: "bad" };
+}
+
 function linspace(min, max, n) {
   const arr = new Array(n);
   const step = (max - min) / (n - 1);
@@ -49,35 +158,56 @@ function linspace(min, max, n) {
   return arr;
 }
 
+/** Enough samples that the narrowest line in the level is still resolved (~6 per sigma). */
+function spectrumPointCount(level) {
+  const range = level.xMax - level.xMin;
+  let minSigma = Infinity;
+  for (const line of level.trueLines) if (line.sigma < minSigma) minSigma = line.sigma;
+  if (!isFinite(minSigma) || minSigma <= 0) return 800;
+  return Math.max(800, Math.min(3200, Math.ceil(range / (minSigma / 6))));
+}
+
 function generateSpectrum(level) {
-  const points = 800;
-  const x = linspace(level.xMin, level.xMax, points);
-  const gaussians = level.trueLines.map((tl) => ({
-    amplitude: tl.amplitude,
-    center: tl.center,
-    sigma: tl.sigma,
-  }));
-  let y = sumGaussians(x, gaussians, level.baseline);
+  const x = linspace(level.xMin, level.xMax, spectrumPointCount(level));
+  let y = composeSpectrum(x, level.trueLines, level.baseline, level.mode);
   if (level.noiseLevel > 0) {
-    y = y.map((v) => v + (Math.random() * 2 - 1) * level.noiseLevel);
+    const absorb = isAbsorption(level.mode);
+    y = y.map((v) => {
+      const noisy = v + (Math.random() * 2 - 1) * level.noiseLevel;
+      return absorb ? Math.max(0, noisy) : noisy;
+    });
   }
   return { x, y, trueLines: level.trueLines.slice() };
 }
 
-function computeLineErrors(trueLines, playerGs) {
-  return trueLines.map((line) => {
-    if (playerGs.length === 0) {
-      return { line, matchedGaussian: null, percentError: null };
-    }
-    let best = null;
-    let bestDist = Infinity;
-    for (const g of playerGs) {
-      const dist = Math.abs(g.center - line.center);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = g;
-      }
-    }
+/** Weak forest lines are drawn but not scored, so a crowded scan stays playable. */
+function isGradedLine(line) {
+  return line.graded !== false;
+}
+
+/**
+ * Assign each true line its own player component (one-to-one, closest pairs first).
+ * A single broad component must not be allowed to claim several blended lines.
+ */
+function computeLineErrors(trueLines, playerComponents) {
+  const pairs = [];
+  trueLines.forEach((line, li) => {
+    playerComponents.forEach((component, ci) => {
+      pairs.push({ li, ci, dist: Math.abs(component.center - line.center) });
+    });
+  });
+  pairs.sort((a, b) => a.dist - b.dist);
+  const matched = new Array(trueLines.length).fill(null);
+  const takenLine = new Array(trueLines.length).fill(false);
+  const takenComponent = new Array(playerComponents.length).fill(false);
+  for (const pair of pairs) {
+    if (takenLine[pair.li] || takenComponent[pair.ci]) continue;
+    takenLine[pair.li] = true;
+    takenComponent[pair.ci] = true;
+    matched[pair.li] = playerComponents[pair.ci];
+  }
+  return trueLines.map((line, li) => {
+    const best = matched[li];
     if (!best || line.center === 0) {
       return { line, matchedGaussian: best, percentError: null };
     }
@@ -86,12 +216,33 @@ function computeLineErrors(trueLines, playerGs) {
   });
 }
 
-function describeFitQuality(mse) {
-  if (!isFinite(mse)) return { label: "No fit yet", cls: "" };
-  if (mse < 0.01) return { label: "Excellent fit", cls: "good" };
-  if (mse < 0.05) return { label: "Good fit", cls: "good" };
-  if (mse < 0.15) return { label: "Reasonable fit", cls: "ok" };
-  return { label: "Poor fit", cls: "bad" };
+function lineSpeciesLabel(line) {
+  if (!line || !line.knownLine) return "Unknown line";
+  if (line.transition) return line.label + " " + line.transition;
+  return line.label || "—";
+}
+
+/** Credit for the weak lines: fitting them is optional, so say what was caught. */
+function describeBonusLines(summary) {
+  if (!summary || !summary.extraLineCount) return "";
+  const caught = summary.bonusErrors || [];
+  if (!caught.length) {
+    return (
+      "This level also draws " +
+      summary.extraLineCount +
+      (summary.extraLineCount === 1 ? " weaker line" : " weaker lines") +
+      " that are not scored. There are enough components for those too — try fitting them as well."
+    );
+  }
+  return (
+    "Bonus: you also fitted " +
+    caught.length +
+    " of the " +
+    summary.extraLineCount +
+    " unscored lines — " +
+    caught.map((le) => lineSpeciesLabel(le.line)).join(", ") +
+    "."
+  );
 }
 
 function meanPercentError(lineErrors) {
@@ -100,12 +251,30 @@ function meanPercentError(lineErrors) {
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
-/** Stars from mean % error: ≤1% → 3, ≤3% → 2, ≤5% → 1 */
-function starsFromMeanError(meanErr) {
+/**
+ * Star bands scale with the level's pass threshold: a 480 GHz wide scan and a 9 GHz
+ * warm-up cannot share one absolute percentage.
+ */
+function starBandsForLevel(level) {
+  if (level && Array.isArray(level.starBands) && level.starBands.length === 5) {
+    return level.starBands;
+  }
+  const threshold = (level && level.errorThresholdPercent) || 5;
+  return STAR_BAND_FRACTIONS.map((f) => f * threshold);
+}
+
+/**
+ * Stars from mean center error % (not raw MSE).
+ * Pass still requires every graded line inside the level threshold.
+ */
+function starsFromMeanError(meanErr, bands) {
   if (!isFinite(meanErr)) return 0;
-  if (meanErr <= 1) return 3;
-  if (meanErr <= 3) return 2;
-  if (meanErr <= 5) return 1;
+  const b = Array.isArray(bands) && bands.length === 5 ? bands : [0.05, 0.15, 0.4, 1.5, 5.0];
+  if (meanErr <= b[0]) return 5;
+  if (meanErr <= b[1]) return 4;
+  if (meanErr <= b[2]) return 3;
+  if (meanErr <= b[3]) return 2;
+  if (meanErr <= b[4]) return 1;
   return 0;
 }
 
@@ -114,6 +283,103 @@ function formatScaleFactor(factor) {
   const exp = Math.floor(Math.log10(factor));
   const mant = factor / Math.pow(10, exp);
   return mant.toFixed(2) + "×10" + toSuperscript(exp);
+}
+
+function clampAudibleHz(hz) {
+  return Math.min(AUDIBLE_MAX_HZ, Math.max(AUDIBLE_MIN_HZ, hz));
+}
+
+/** Round a divisor to the nearest power of ten — "we divided by one billion" is easy to tell. */
+function roundDivisor(exact) {
+  if (!isFinite(exact) || exact <= 0) return exact;
+  return Math.pow(10, Math.round(Math.log10(exact)));
+}
+
+/**
+ * Map the fitted line positions (GHz or nm) onto audible pitches. Two rules:
+ *  - "stretch": narrow bands get an exaggerated SONIFY_HZ_PER_GHZ of pitch per GHz of
+ *    separation, otherwise neighbouring lines would sound identical.
+ *  - "ratio": wide bands are divided by a single constant, so the notes keep the true
+ *    frequency ratios of the lines — a real octave in the spectrum stays an octave by ear.
+ * @param {(number|null)[]} axisValues fitted centers, aligned with the graded line list
+ * @param {LevelConfig} level
+ */
+function sonifyAxisValues(axisValues, level) {
+  const axisKey = (level && level.axis) || "GHz";
+  const axis = axisByKey(axisKey);
+  const mode = (level && level.sonify) || "stretch";
+  const values = axisValues || [];
+  const originalHz = values.map((v) => (v == null || !isFinite(v) ? NaN : axis.toHz(v)));
+
+  if (mode === "ratio") {
+    const edgeA = axis.toHz(level.xMin);
+    const edgeB = axis.toHz(level.xMax);
+    const windowLow = Math.min(edgeA, edgeB);
+    const windowHigh = Math.max(edgeA, edgeB);
+    const exact = Math.sqrt(windowLow * windowHigh) / SONIFY_RATIO_CENTER_HZ;
+    let divisor = roundDivisor(exact);
+    if (
+      windowLow / divisor < SONIFY_RATIO_MIN_HZ ||
+      windowHigh / divisor > SONIFY_RATIO_MAX_HZ
+    ) {
+      divisor = exact;
+    }
+    return {
+      mode: "ratio",
+      unit: axisKey,
+      audibleHz: originalHz.map((hz) => (isFinite(hz) ? hz / divisor : NaN)),
+      originalHz,
+      divisor,
+      scaleFactor: divisor,
+      windowAudibleHz: [windowLow / divisor, windowHigh / divisor],
+    };
+  }
+
+  const valid = values.filter((v) => v != null && isFinite(v));
+  if (!valid.length) {
+    return {
+      mode: "stretch",
+      unit: axisKey,
+      audibleHz: values.map(() => NaN),
+      originalHz,
+      hzPerGHz: SONIFY_HZ_PER_GHZ,
+      basePitchHz: NaN,
+      scaleFactor: NaN,
+    };
+  }
+  const minValue = Math.min.apply(null, valid);
+  // Mild absolute offset from the band, so higher-GHz levels sit a little higher overall.
+  const basePitchHz = clampAudibleHz(220 + (minValue - 70) * 1.2);
+  return {
+    mode: "stretch",
+    unit: axisKey,
+    audibleHz: values.map((v) =>
+      v == null || !isFinite(v)
+        ? NaN
+        : clampAudibleHz(basePitchHz + (v - minValue) * SONIFY_HZ_PER_GHZ)
+    ),
+    originalHz,
+    hzPerGHz: SONIFY_HZ_PER_GHZ,
+    basePitchHz,
+    scaleFactor: axis.toHz(minValue) / basePitchHz,
+  };
+}
+
+/** One sentence describing which sonification rule produced these notes. */
+function describeSonifyRule(sonification) {
+  if (!sonification) return "";
+  if (sonification.mode === "ratio") {
+    return (
+      "Every frequency was divided by the same number (" +
+      formatScaleFactor(sonification.divisor) +
+      "), so the notes keep the true frequency ratios of the lines."
+    );
+  }
+  return (
+    "Higher frequency → higher note. The gaps are stretched so nearby lines don't sound the same (about " +
+    (sonification.hzPerGHz || SONIFY_HZ_PER_GHZ) +
+    " Hz of pitch for every 1 GHz of separation)."
+  );
 }
 
 function toSuperscript(n) {
@@ -186,26 +452,6 @@ function setMasterMuted(muted) {
     masterGainNode.gain.value = muted ? 0 : globalVolume;
   }
   if (muted) stopAllAudio();
-}
-
-/**
- * Scale GHz radio frequencies into an audible band, preserving ratios.
- * @param {number[]} freqGHzList
- */
-function scaleFrequenciesToAudible(freqGHzList) {
-  const originalHz = freqGHzList.map((g) => g * 1e9);
-  const minHz = Math.min.apply(null, originalHz);
-  if (!isFinite(minHz) || minHz <= 0) {
-    return { audibleHz: [], scaleFactor: NaN, originalHz: [] };
-  }
-  const scaleFactor = minHz / AUDIBLE_BASE_HZ;
-  let audibleHz = originalHz.map((hz) => hz / scaleFactor);
-  const maxAud = Math.max.apply(null, audibleHz);
-  if (maxAud > AUDIBLE_MAX_HZ) {
-    const compress = AUDIBLE_MAX_HZ / maxAud;
-    audibleHz = audibleHz.map((hz) => hz * compress);
-  }
-  return { audibleHz, scaleFactor, originalHz };
 }
 
 function stopAllAudio() {
@@ -283,58 +529,130 @@ async function playChord(hzList, durationSec, muted) {
 
 // ——— CDMS catalog & facts ———
 
+/** Radio rest frequencies in GHz, curated from CDMS. */
 const CDMS_CATALOG = [
-  { frequencyGHz: 72.837948, molecule: "H2CO", tag: "030501", transition: "1(1,0)-1(1,1)" },
-  { frequencyGHz: 84.521172, molecule: "CH3OH", tag: "032504", transition: "5(1,4)-4(2,2)" },
-  { frequencyGHz: 88.631847, molecule: "HCN", tag: "027501", transition: "J=1-0" },
-  { frequencyGHz: 89.188523, molecule: "HCO+", tag: "029507", transition: "J=1-0" },
-  { frequencyGHz: 93.173764, molecule: "N2H+", tag: "029506", transition: "J=1-0" },
-  { frequencyGHz: 96.412982, molecule: "C34S", tag: "046501", transition: "J=2-1" },
-  { frequencyGHz: 97.980968, molecule: "CS", tag: "044501", transition: "J=2-1" },
-  { frequencyGHz: 99.299870, molecule: "SO", tag: "048501", transition: "3(2)-2(1)" },
-  { frequencyGHz: 109.782173, molecule: "C18O", tag: "030502", transition: "J=1-0" },
-  { frequencyGHz: 110.201354, molecule: "13CO", tag: "029501", transition: "J=1-0" },
-  { frequencyGHz: 113.490982, molecule: "CN", tag: "026501", transition: "N=1-0" },
-  { frequencyGHz: 115.271202, molecule: "CO", tag: "028503", transition: "J=1-0" },
-  { frequencyGHz: 145.602949, molecule: "H2CO", tag: "030501", transition: "2(1,1)-2(1,2)" },
-  { frequencyGHz: 218.222192, molecule: "H2CO", tag: "030501", transition: "3(0,3)-2(0,2)" },
-  { frequencyGHz: 218.475632, molecule: "H2CO", tag: "030501", transition: "3(2,1)-2(2,0)" },
-  { frequencyGHz: 219.560319, molecule: "C18O", tag: "030502", transition: "J=2-1" },
-  { frequencyGHz: 220.398684, molecule: "13CO", tag: "029501", transition: "J=2-1" },
-  { frequencyGHz: 230.538000, molecule: "CO", tag: "028503", transition: "J=2-1" },
-  { frequencyGHz: 241.616183, molecule: "CH3OH", tag: "032504", transition: "5(0,5)-4(0,4)" },
-  { frequencyGHz: 244.935557, molecule: "CS", tag: "044501", transition: "J=5-4" },
-  { frequencyGHz: 265.886434, molecule: "HCN", tag: "027501", transition: "J=3-2" },
-  { frequencyGHz: 267.557619, molecule: "HCO+", tag: "029507", transition: "J=3-2" },
-  { frequencyGHz: 279.511701, molecule: "N2H+", tag: "029506", transition: "J=3-2" },
-  { frequencyGHz: 293.912173, molecule: "H2CO", tag: "030501", transition: "4(1,3)-4(1,4)" },
-  { frequencyGHz: 310.019349, molecule: "CS", tag: "044501", transition: "J=6-5" },
+  { value: 72.837948, species: "H2CO", transition: "1(1,0)-1(1,1)" },
+  { value: 84.521172, species: "CH3OH", transition: "5(1,4)-4(2,2)" },
+  { value: 86.243442, species: "SiO", transition: "J=2-1 v=0" },
+  { value: 86.754294, species: "H13CO+", transition: "J=1-0" },
+  { value: 87.316898, species: "C2H", transition: "N=1-0 J=3/2-1/2 F=2-1" },
+  { value: 88.631847, species: "HCN", transition: "J=1-0" },
+  { value: 89.188523, species: "HCO+", transition: "J=1-0" },
+  { value: 90.663568, species: "HNC", transition: "J=1-0" },
+  { value: 93.173764, species: "N2H+", transition: "J=1-0" },
+  { value: 96.412950, species: "C34S", transition: "J=2-1" },
+  { value: 96.741375, species: "CH3OH", transition: "2(0)-1(0) A+" },
+  { value: 97.980953, species: "CS", transition: "J=2-1" },
+  { value: 99.299870, species: "SO", transition: "3(2)-2(1)" },
+  { value: 100.076392, species: "HC3N", transition: "J=11-10" },
+  { value: 109.782173, species: "C18O", transition: "J=1-0" },
+  { value: 110.201354, species: "13CO", transition: "J=1-0" },
+  { value: 113.490982, species: "CN", transition: "N=1-0" },
+  { value: 115.271202, species: "CO", transition: "J=1-0" },
+  { value: 145.602949, species: "H2CO", transition: "2(1,1)-2(1,2)" },
+  { value: 218.222192, species: "H2CO", transition: "3(0,3)-2(0,2)" },
+  { value: 218.475632, species: "H2CO", transition: "3(2,1)-2(2,0)" },
+  { value: 219.560319, species: "C18O", transition: "J=2-1" },
+  { value: 220.398684, species: "13CO", transition: "J=2-1" },
+  { value: 230.538000, species: "CO", transition: "J=2-1" },
+  { value: 241.616183, species: "CH3OH", transition: "5(0,5)-4(0,4)" },
+  { value: 244.935557, species: "CS", transition: "J=5-4" },
+  { value: 265.886434, species: "HCN", transition: "J=3-2" },
+  { value: 267.557619, species: "HCO+", transition: "J=3-2" },
+  { value: 271.981142, species: "HNC", transition: "J=3-2" },
+  { value: 279.511701, species: "N2H+", transition: "J=3-2" },
+  { value: 293.912173, species: "H2CO", transition: "4(1,3)-4(1,4)" },
+  { value: 310.019349, species: "CS", transition: "J=6-5" },
+  { value: 461.040768, species: "CO", transition: "J=4-3" },
+  { value: 492.160651, species: "CI", transition: "3P1-3P0" },
+  { value: 531.716350, species: "HCN", transition: "J=6-5" },
+  { value: 535.061600, species: "HCO+", transition: "J=6-5" },
+  { value: 538.688830, species: "CS", transition: "J=11-10" },
+  { value: 550.926300, species: "13CO", transition: "J=5-4" },
+  { value: 556.936002, species: "H2O", transition: "1(1,0)-1(0,1)" },
+  { value: 572.498068, species: "NH3", transition: "1(0)-0(0)" },
+  { value: 576.267931, species: "CO", transition: "J=5-4" },
+  { value: 587.616000, species: "CS", transition: "J=12-11" },
+  { value: 620.304095, species: "HCN", transition: "J=7-6" },
+  { value: 624.208000, species: "HCO+", transition: "J=7-6" },
+  { value: 691.473076, species: "CO", transition: "J=6-5" },
+  { value: 806.651806, species: "CO", transition: "J=7-6" },
+  { value: 809.343500, species: "CI", transition: "3P2-3P1" },
+  { value: 921.799700, species: "CO", transition: "J=8-7" },
+];
+
+/** Solar Fraunhofer lines: air wavelengths in nm with Fraunhofer's original letters. */
+const FRAUNHOFER_CATALOG = [
+  { value: 382.044, species: "Fe I", transition: "L" },
+  { value: 393.366, species: "Ca II", transition: "K" },
+  { value: 396.847, species: "Ca II", transition: "H" },
+  { value: 410.175, species: "H I", transition: "h (H-delta)" },
+  { value: 430.774, species: "Ca I", transition: "G" },
+  { value: 430.790, species: "Fe I", transition: "G" },
+  { value: 434.047, species: "H I", transition: "G' (H-gamma)" },
+  { value: 438.355, species: "Fe I", transition: "e" },
+  { value: 466.814, species: "Fe I", transition: "d" },
+  { value: 486.134, species: "H I", transition: "F (H-beta)" },
+  { value: 495.761, species: "Fe I", transition: "c" },
+  { value: 516.733, species: "Mg I", transition: "b4" },
+  { value: 516.891, species: "Fe I", transition: "b3" },
+  { value: 517.270, species: "Mg I", transition: "b2" },
+  { value: 518.362, species: "Mg I", transition: "b1" },
+  { value: 527.039, species: "Fe I", transition: "E2" },
+  { value: 587.562, species: "He I", transition: "D3" },
+  { value: 588.995, species: "Na I", transition: "D2" },
+  { value: 589.592, species: "Na I", transition: "D1" },
+  { value: 627.661, species: "O2", transition: "a (telluric)" },
+  { value: 656.281, species: "H I", transition: "C (H-alpha)" },
+  { value: 686.719, species: "O2", transition: "B (telluric)" },
+  { value: 759.370, species: "O2", transition: "A (telluric)" },
 ];
 
 const MOLECULE_FACTS = {
   HCN: "Hydrogen cyanide (HCN) is common in dense molecular clouds and traces warm gas near young stars.",
   "HCO+": "The formyl ion (HCO+) is a key tracer of dense, ionized gas in star-forming regions.",
+  "H13CO+": "H¹³CO⁺ is the rare-carbon version of HCO⁺; it stays optically thin where the main line is saturated.",
+  HNC: "Hydrogen isocyanide (HNC) has the same atoms as HCN but a different order; the ratio of the two is a cloud thermometer.",
   "N2H+": "Diazenylium (N2H+) survives where CO freezes out, so it maps the coldest, densest cloud cores.",
   CS: "Carbon monosulfide (CS) is a dense-gas tracer found in molecular clouds and protostellar envelopes.",
   C34S: "C³⁴S is a rarer sulfur isotope of CS; comparing isotopes helps measure how opaque a cloud is.",
   SO: "Sulfur monoxide (SO) often brightens in shocked gas, for example where outflows slam into cloud material.",
+  SiO: "Silicon monoxide (SiO) is locked into dust grains until a shock smashes them, so it lights up jets and outflows.",
+  C2H: "The ethynyl radical (C2H) thrives in gas lit by ultraviolet starlight, at the edges of clouds.",
+  HC3N: "Cyanoacetylene (HC3N) is one of the longer carbon chains found in space and marks warm, chemically rich cores.",
   CO: "Carbon monoxide (CO) is the most widely used tracer of molecular gas across the Milky Way and beyond.",
   "13CO": "¹³CO is a less abundant CO isotope; it stays optically thinner and probes denser gas than main-line CO.",
   C18O: "C¹⁸O is even rarer than ¹³CO and is used to weigh the densest parts of molecular clouds.",
   CN: "The cyano radical (CN) is seen in UV-irradiated cloud edges and helps probe chemistry near starlight.",
   H2CO: "Formaldehyde (H₂CO) appears in many environments, from cold clouds to comets and star-forming regions.",
   CH3OH: "Methanol (CH₃OH) is a complex organic molecule linked to ice chemistry on dust grains.",
+  H2O: "Water vapour lines are blocked by our own atmosphere, so the 557 GHz line had to be observed from space by Herschel.",
+  NH3: "Ammonia (NH₃) was among the first molecules found in space and is still a favourite gas thermometer.",
+  CI: "Neutral atomic carbon marks the layer where ultraviolet light has broken CO apart.",
+  "Ca II": "Singly ionized calcium produces the H and K lines, the strongest dark features in the violet part of the solar spectrum.",
+  "H I": "Hydrogen's Balmer lines (H-alpha, H-beta, ...) come from the most abundant element in the Universe.",
+  "Na I": "Sodium's D lines are the same yellow glow as a street lamp — and in the Sun they appear as two dark lines.",
+  "Mg I": "Neutral magnesium makes the b triplet in the green; it is a favourite for measuring solar magnetic fields.",
+  "Fe I": "Iron alone contributes thousands of lines to the solar spectrum, which is why the Sun's rainbow looks so ragged.",
+  "Ca I": "Neutral calcium blends with iron in the G band, one of the features Fraunhofer catalogued in 1814.",
+  "He I": "Helium was discovered in the Sun before it was found on Earth — hence the name, from Helios.",
+  O2: "This line is not solar at all: oxygen in our own atmosphere absorbs the sunlight on its way to the telescope.",
 };
 
-function findClosestCDMSLine(frequencyGHz) {
-  if (CDMS_CATALOG.length === 0) return null;
-  let best = CDMS_CATALOG[0];
-  let bestDist = Math.abs(CDMS_CATALOG[0].frequencyGHz - frequencyGHz);
-  for (let i = 1; i < CDMS_CATALOG.length; i++) {
-    const d = Math.abs(CDMS_CATALOG[i].frequencyGHz - frequencyGHz);
+function catalogForAxis(axisKey) {
+  return axisKey === "nm" ? FRAUNHOFER_CATALOG : CDMS_CATALOG;
+}
+
+function findClosestCatalogLine(value, axisKey) {
+  const catalog = catalogForAxis(axisKey);
+  if (!catalog.length || value == null || !isFinite(value)) return null;
+  let best = catalog[0];
+  let bestDist = Math.abs(catalog[0].value - value);
+  for (let i = 1; i < catalog.length; i++) {
+    const d = Math.abs(catalog[i].value - value);
     if (d < bestDist) {
       bestDist = d;
-      best = CDMS_CATALOG[i];
+      best = catalog[i];
     }
   }
   return best;
@@ -407,104 +725,409 @@ function saveLeaderboardEntry(levelId, name, mse, meanErr, stars) {
   return { board, accepted, rank };
 }
 
+const TRACKS = [
+  { key: "radio", label: "Radio", source: "cdms" },
+  { key: "solar", label: "Solar", source: "fraunhofer" },
+];
+
 /** @type {LevelConfig[]} */
 const LEVELS = [
   {
     id: 1,
     name: "Level 1 – Warm-up",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb: "Two dense-gas tracers, overlapping just enough to matter. Start here.",
     xMin: 86,
     xMax: 95,
     noiseLevel: 0.08,
     baseline: 0.3,
-    errorThresholdPercent: 5,
-    maxGaussians: 3,
+    errorThresholdPercent: 0.3,
     trueLines: [
-      { amplitude: 3.2, center: 88.631847, sigma: 0.25, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 2.9, center: 89.188523, sigma: 0.28, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 3.2, center: 88.631847, sigma: 0.19, tau: 0.5, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 2.9, center: 89.188523, sigma: 0.2, tau: 0.35, knownLine: true, label: "HCO+", transition: "J=1-0" },
     ],
   },
   {
     id: 2,
     name: "Level 2 – Blended",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb:
+      "Six species in nine gigahertz. One unidentified line hides in the shoulder of C34S — it is drawn but not scored.",
     xMin: 93,
     xMax: 102,
-    noiseLevel: 0.22,
+    noiseLevel: 0.2,
     baseline: 0.5,
-    errorThresholdPercent: 5,
-    maxGaussians: 4,
+    errorThresholdPercent: 0.5,
     trueLines: [
-      { amplitude: 2.8, center: 96.412982, sigma: 0.22, knownLine: true, label: "C34S", transition: "J=2-1" },
-      { amplitude: 2.1, center: 97.980968, sigma: 0.26, knownLine: false },
-      { amplitude: 2.6, center: 99.299870, sigma: 0.24, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
+      { amplitude: 1.6, center: 93.173764, sigma: 0.35, tau: 0.3, knownLine: true, label: "N2H+", transition: "J=1-0" },
+      { amplitude: 2.4, center: 96.412950, sigma: 0.28, tau: 0.5, knownLine: true, label: "C34S", transition: "J=2-1" },
+      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false, graded: false },
+      { amplitude: 3.0, center: 97.980953, sigma: 0.32, tau: 1.6, knownLine: true, label: "CS", transition: "J=2-1" },
+      { amplitude: 2.6, center: 99.299870, sigma: 0.24, tau: 0.8, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
+      { amplitude: 0.9, center: 100.076392, sigma: 0.22, tau: 0.25, knownLine: true, label: "HC3N", transition: "J=11-10" },
     ],
   },
   {
     id: 3,
     name: "Level 3 – Crowded",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb: "A pair of formaldehyde lines less than a linewidth apart, and CO saturated flat on top.",
     xMin: 217,
     xMax: 235,
-    noiseLevel: 0.38,
+    noiseLevel: 0.32,
     baseline: 0.65,
-    errorThresholdPercent: 5,
-    maxGaussians: 5,
+    errorThresholdPercent: 0.25,
     trueLines: [
-      { amplitude: 2.5, center: 218.222192, sigma: 0.28, knownLine: true, label: "H2CO", transition: "3(0,3)-2(0,2)" },
-      { amplitude: 2.7, center: 218.475632, sigma: 0.30, knownLine: false },
-      { amplitude: 2.2, center: 219.560319, sigma: 0.24, knownLine: true, label: "C18O", transition: "J=2-1" },
-      { amplitude: 2.0, center: 220.398684, sigma: 0.26, knownLine: true, label: "13CO", transition: "J=2-1" },
+      { amplitude: 2.5, center: 218.222192, sigma: 0.28, tau: 0.8, knownLine: true, label: "H2CO", transition: "3(0,3)-2(0,2)" },
+      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false, graded: false },
+      { amplitude: 2.2, center: 219.560319, sigma: 0.26, tau: 0.5, knownLine: true, label: "C18O", transition: "J=2-1" },
+      { amplitude: 2.6, center: 220.398684, sigma: 0.26, tau: 1.2, knownLine: true, label: "13CO", transition: "J=2-1" },
+      { amplitude: 4.0, center: 230.538000, sigma: 0.5, tau: 4.0, knownLine: true, label: "CO", transition: "J=2-1" },
     ],
   },
   {
     id: 4,
     name: "Level 4 – 3 mm band",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb: "The classic CO isotope trio, plus a mystery line and a saturated main CO line.",
     xMin: 108,
     xMax: 117,
-    noiseLevel: 0.28,
+    noiseLevel: 0.24,
     baseline: 0.55,
-    errorThresholdPercent: 5,
-    maxGaussians: 5,
+    errorThresholdPercent: 0.25,
     trueLines: [
-      { amplitude: 2.4, center: 109.782173, sigma: 0.22, knownLine: true, label: "C18O", transition: "J=1-0" },
-      { amplitude: 2.6, center: 110.201354, sigma: 0.24, knownLine: true, label: "13CO", transition: "J=1-0" },
-      { amplitude: 2.0, center: 113.490982, sigma: 0.26, knownLine: false },
-      { amplitude: 3.0, center: 115.271202, sigma: 0.23, knownLine: true, label: "CO", transition: "J=1-0" },
+      { amplitude: 2.4, center: 109.782173, sigma: 0.13, tau: 0.4, knownLine: true, label: "C18O", transition: "J=1-0" },
+      { amplitude: 3.0, center: 110.201354, sigma: 0.13, tau: 1.0, knownLine: true, label: "13CO", transition: "J=1-0" },
+      { amplitude: 2.0, center: 113.490982, sigma: 0.22, tau: 0.5, knownLine: false },
+      { amplitude: 4.2, center: 115.271202, sigma: 0.25, tau: 4.5, knownLine: true, label: "CO", transition: "J=1-0" },
     ],
   },
   {
     id: 5,
     name: "Level 5 – Submm blend",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb: "One of these bumps is an unidentified U-line — real surveys are full of them.",
     xMin: 228,
     xMax: 246,
-    noiseLevel: 0.42,
+    noiseLevel: 0.36,
     baseline: 0.7,
-    errorThresholdPercent: 5,
-    maxGaussians: 5,
+    errorThresholdPercent: 0.3,
     trueLines: [
-      { amplitude: 3.1, center: 230.538000, sigma: 0.26, knownLine: true, label: "CO", transition: "J=2-1" },
-      { amplitude: 2.0, center: 241.616183, sigma: 0.28, knownLine: false },
-      { amplitude: 2.4, center: 244.935557, sigma: 0.24, knownLine: true, label: "CS", transition: "J=5-4" },
+      { amplitude: 3.6, center: 230.538000, sigma: 0.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=2-1" },
+      { amplitude: 1.4, center: 241.616183, sigma: 0.4, tau: 0.3, knownLine: false },
+      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 2.4, center: 244.935557, sigma: 0.42, tau: 1.0, knownLine: true, label: "CS", transition: "J=5-4" },
     ],
   },
   {
     id: 6,
     name: "Level 6 – Dense tracers",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb: "HCN and HCO+ at J=3-2, both optically thick, plus HNC and one unknown.",
     xMin: 263,
     xMax: 282,
-    noiseLevel: 0.48,
+    noiseLevel: 0.4,
     baseline: 0.75,
-    errorThresholdPercent: 5,
-    maxGaussians: 5,
+    errorThresholdPercent: 0.25,
     trueLines: [
-      { amplitude: 2.6, center: 265.886434, sigma: 0.24, knownLine: true, label: "HCN", transition: "J=3-2" },
-      { amplitude: 2.8, center: 267.557619, sigma: 0.26, knownLine: true, label: "HCO+", transition: "J=3-2" },
-      { amplitude: 2.1, center: 279.511701, sigma: 0.28, knownLine: false },
+      { amplitude: 3.2, center: 265.886434, sigma: 0.35, tau: 2.5, knownLine: true, label: "HCN", transition: "J=3-2" },
+      { amplitude: 2.8, center: 267.557619, sigma: 0.32, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=3-2" },
+      { amplitude: 1.6, center: 271.981142, sigma: 0.32, tau: 0.5, knownLine: true, label: "HNC", transition: "J=3-2" },
+      { amplitude: 2.1, center: 279.511701, sigma: 0.35, tau: 0.6, knownLine: false },
+    ],
+  },
+  {
+    id: 7,
+    name: "Level 7 – Wide 3 mm scan",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "ratio",
+    blurb:
+      "Sixteen lines across 32 GHz, from CO twenty times brighter than the weakest feature. Only the eight strong lines are scored — use the log button to see the faint ones.",
+    xMin: 84,
+    xMax: 116,
+    noiseLevel: 0.05,
+    baseline: 0.12,
+    errorThresholdPercent: 0.2,
+    allowLogY: true,
+    trueLines: [
+      { amplitude: 0.25, center: 86.243442, sigma: 0.11, tau: 0.2, knownLine: true, graded: false, label: "SiO", transition: "J=2-1 v=0" },
+      { amplitude: 0.18, center: 86.754294, sigma: 0.1, tau: 0.2, knownLine: true, graded: false, label: "H13CO+", transition: "J=1-0" },
+      { amplitude: 0.55, center: 87.316898, sigma: 0.12, tau: 0.3, knownLine: true, graded: false, label: "C2H", transition: "N=1-0" },
+      { amplitude: 2.6, center: 88.631847, sigma: 0.12, tau: 2.0, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 2.2, center: 89.188523, sigma: 0.11, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 0.9, center: 90.663568, sigma: 0.11, tau: 0.5, knownLine: true, label: "HNC", transition: "J=1-0" },
+      { amplitude: 1.1, center: 93.173764, sigma: 0.12, tau: 0.6, knownLine: true, label: "N2H+", transition: "J=1-0" },
+      { amplitude: 0.35, center: 96.412950, sigma: 0.1, tau: 0.3, knownLine: true, graded: false, label: "C34S", transition: "J=2-1" },
+      { amplitude: 0.3, center: 96.741375, sigma: 0.11, tau: 0.2, knownLine: true, graded: false, label: "CH3OH", transition: "2(0)-1(0) A+" },
+      { amplitude: 1.5, center: 97.980953, sigma: 0.12, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
+      { amplitude: 0.65, center: 99.299870, sigma: 0.11, tau: 0.4, knownLine: true, graded: false, label: "SO", transition: "3(2)-2(1)" },
+      { amplitude: 0.22, center: 100.076392, sigma: 0.1, tau: 0.2, knownLine: true, graded: false, label: "HC3N", transition: "J=11-10" },
+      { amplitude: 0.8, center: 109.782173, sigma: 0.1, tau: 0.4, knownLine: true, label: "C18O", transition: "J=1-0" },
+      { amplitude: 2.0, center: 110.201354, sigma: 0.11, tau: 1.2, knownLine: true, label: "13CO", transition: "J=1-0" },
+      { amplitude: 0.7, center: 113.490982, sigma: 0.13, tau: 0.5, knownLine: false, graded: false },
+      { amplitude: 4.0, center: 115.271202, sigma: 0.13, tau: 5.0, knownLine: true, label: "CO", transition: "J=1-0" },
+    ],
+  },
+  {
+    id: 8,
+    name: "Level 8 – CO ladder scan",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "ratio",
+    blurb:
+      "A HEXOS-style scan spanning almost exactly one octave: CO J=4-3 up to J=8-7 is a 4:5:6:7:8 harmonic series, so the fitted lines play as a chord. Score the five CO rungs plus water and atomic carbon.",
+    xMin: 450,
+    xMax: 930,
+    noiseLevel: 0.04,
+    baseline: 0.1,
+    errorThresholdPercent: 0.3,
+    allowLogY: true,
+    trueLines: [
+      { amplitude: 3.0, center: 461.040768, sigma: 1.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=4-3" },
+      { amplitude: 1.2, center: 492.160651, sigma: 1.4, tau: 0.8, knownLine: true, label: "CI", transition: "3P1-3P0" },
+      { amplitude: 0.25, center: 505.3, sigma: 1.1, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 0.7, center: 531.716350, sigma: 1.3, tau: 0.5, knownLine: true, graded: false, label: "HCN", transition: "J=6-5" },
+      { amplitude: 0.6, center: 535.061600, sigma: 1.3, tau: 0.5, knownLine: true, graded: false, label: "HCO+", transition: "J=6-5" },
+      { amplitude: 0.35, center: 538.688830, sigma: 1.2, tau: 0.3, knownLine: true, graded: false, label: "CS", transition: "J=11-10" },
+      { amplitude: 0.8, center: 550.926300, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "13CO", transition: "J=5-4" },
+      { amplitude: 2.2, center: 556.936002, sigma: 1.8, tau: 2.0, knownLine: true, label: "H2O", transition: "1(1,0)-1(0,1)" },
+      { amplitude: 0.5, center: 572.498068, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "NH3", transition: "1(0)-0(0)" },
+      { amplitude: 3.4, center: 576.267931, sigma: 1.6, tau: 3.5, knownLine: true, label: "CO", transition: "J=5-4" },
+      { amplitude: 0.3, center: 587.616000, sigma: 1.2, tau: 0.3, knownLine: true, graded: false, label: "CS", transition: "J=12-11" },
+      { amplitude: 0.2, center: 617.0, sigma: 1.1, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 0.55, center: 620.304095, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "HCN", transition: "J=7-6" },
+      { amplitude: 0.5, center: 624.208000, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "HCO+", transition: "J=7-6" },
+      { amplitude: 3.2, center: 691.473076, sigma: 1.7, tau: 3.0, knownLine: true, label: "CO", transition: "J=6-5" },
+      { amplitude: 0.3, center: 738.4, sigma: 1.2, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 2.6, center: 806.651806, sigma: 1.3, tau: 2.5, knownLine: true, label: "CO", transition: "J=7-6" },
+      { amplitude: 0.75, center: 809.343500, sigma: 1.1, tau: 1.0, knownLine: true, graded: false, label: "CI", transition: "3P2-3P1" },
+      { amplitude: 0.22, center: 864.9, sigma: 1.2, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 2.0, center: 921.799700, sigma: 1.6, tau: 2.0, knownLine: true, label: "CO", transition: "J=8-7" },
+    ],
+  },
+  {
+    id: 9,
+    name: "Level 9 – Radio absorption",
+    track: "radio",
+    mode: "absorption",
+    axis: "GHz",
+    sonify: "stretch",
+    blurb:
+      "The same molecules as Level 1, but now seen against a bright continuum source: the lines cut down into it instead of sticking up. N2H+ is so opaque that its core is saturated flat.",
+    xMin: 86,
+    xMax: 95,
+    noiseLevel: 0.05,
+    baseline: 3.2,
+    errorThresholdPercent: 0.3,
+    trueLines: [
+      { amplitude: 0.6, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, graded: false, label: "SiO", transition: "J=2-1 v=0" },
+      { amplitude: 0.4, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, graded: false, label: "H13CO+", transition: "J=1-0" },
+      { amplitude: 1.0, center: 87.316898, sigma: 0.2, tau: 0.6, knownLine: true, label: "C2H", transition: "N=1-0" },
+      { amplitude: 2.0, center: 88.631847, sigma: 0.15, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 1.8, center: 89.188523, sigma: 0.14, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 1.2, center: 90.663568, sigma: 0.18, tau: 1.0, knownLine: true, label: "HNC", transition: "J=1-0" },
+      { amplitude: 2.9, center: 93.173764, sigma: 0.3, tau: 8.0, knownLine: true, label: "N2H+", transition: "J=1-0" },
+    ],
+  },
+  {
+    id: 10,
+    name: "Level 10 – Solar spectrum",
+    track: "solar",
+    mode: "absorption",
+    axis: "nm",
+    sonify: "ratio",
+    blurb:
+      "Fraunhofer's own spectrum: dark absorption lines across the whole visible range, at the resolution of a school spectroscope. Two of the scored features look like single lines here but split apart in Levels 11 and 12, and two of the weak lines are made by our own atmosphere, not the Sun.",
+    xMin: 380,
+    xMax: 700,
+    noiseLevel: 0.012,
+    baseline: 1.0,
+    errorThresholdPercent: 0.25,
+    showSpectrumColors: true,
+    trueLines: [
+      { amplitude: 0.8, center: 393.366, sigma: 0.65, tau: 8, knownLine: true, label: "Ca II", transition: "K" },
+      { amplitude: 0.75, center: 396.847, sigma: 0.62, tau: 7, knownLine: true, label: "Ca II", transition: "H" },
+      { amplitude: 0.45, center: 410.175, sigma: 0.7, tau: 2.5, knownLine: true, label: "H I", transition: "h (H-delta)" },
+      { amplitude: 0.35, center: 430.78, sigma: 0.8, tau: 2, knownLine: true, graded: false, label: "Fe I", transition: "G band (with Ca I)" },
+      { amplitude: 0.48, center: 434.047, sigma: 0.75, tau: 2.5, knownLine: true, label: "H I", transition: "G' (H-gamma)" },
+      { amplitude: 0.22, center: 438.355, sigma: 0.6, tau: 1, knownLine: true, graded: false, label: "Fe I", transition: "e" },
+      { amplitude: 0.52, center: 486.134, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "F (H-beta)" },
+      { amplitude: 0.2, center: 495.761, sigma: 0.6, tau: 1, knownLine: true, graded: false, label: "Fe I", transition: "c" },
+      { amplitude: 0.55, center: 517.3, sigma: 1.1, tau: 4, knownLine: true, label: "Mg I", transition: "b triplet (blend)" },
+      { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, graded: false, label: "Fe I", transition: "E2" },
+      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, graded: false, label: "He I", transition: "D3" },
+      { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D doublet (blend)" },
+      { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, graded: false, label: "O2", transition: "a (telluric)" },
+      { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "C (H-alpha)" },
+      { amplitude: 0.28, center: 686.719, sigma: 0.7, tau: 1.5, knownLine: true, graded: false, label: "O2", transition: "B (telluric)" },
+    ],
+  },
+  {
+    id: 11,
+    name: "Level 11 – Magnesium close-up",
+    track: "solar",
+    mode: "absorption",
+    axis: "nm",
+    sonify: "ratio",
+    blurb:
+      "Four nanometres of the green, where the single dark 'Mg b' feature of Level 10 turns out to be three magnesium lines with an iron line wedged against the first one.",
+    xMin: 515.5,
+    xMax: 519.5,
+    noiseLevel: 0.008,
+    baseline: 1.0,
+    errorThresholdPercent: 0.015,
+    showSpectrumColors: true,
+    trueLines: [
+      { amplitude: 0.6, center: 516.733, sigma: 0.042, tau: 3, knownLine: true, label: "Mg I", transition: "b4" },
+      { amplitude: 0.24, center: 516.891, sigma: 0.038, tau: 1.5, knownLine: true, graded: false, label: "Fe I", transition: "b3" },
+      { amplitude: 0.55, center: 517.27, sigma: 0.045, tau: 2.5, knownLine: true, label: "Mg I", transition: "b2" },
+      { amplitude: 0.62, center: 518.362, sigma: 0.048, tau: 3, knownLine: true, label: "Mg I", transition: "b1" },
+    ],
+  },
+  {
+    id: 12,
+    name: "Level 12 – Sodium close-up",
+    track: "solar",
+    mode: "absorption",
+    axis: "nm",
+    sonify: "ratio",
+    blurb:
+      "Five nanometres of the yellow: the famous sodium D line is a doublet, and both cores are so opaque that their bottoms are flat. The faint neighbour is helium, the element found in the Sun before it was found on Earth.",
+    xMin: 586.5,
+    xMax: 591.5,
+    noiseLevel: 0.008,
+    baseline: 1.0,
+    errorThresholdPercent: 0.02,
+    showSpectrumColors: true,
+    trueLines: [
+      { amplitude: 0.09, center: 587.562, sigma: 0.05, tau: 0.5, knownLine: true, graded: false, label: "He I", transition: "D3" },
+      { amplitude: 0.78, center: 588.995, sigma: 0.07, tau: 6, knownLine: true, label: "Na I", transition: "D2" },
+      { amplitude: 0.7, center: 589.592, sigma: 0.065, tau: 5, knownLine: true, label: "Na I", transition: "D1" },
     ],
   },
 ];
 
+function levelById(id) {
+  return LEVELS.find((lvl) => lvl.id === id) || null;
+}
+
+/**
+ * Every line that is drawn can be fitted, weak forest included, plus two spare
+ * components to experiment with. Levels may still set maxGaussians explicitly.
+ */
+function maxComponentsForLevel(level) {
+  if (level && Number.isFinite(level.maxGaussians)) return level.maxGaussians;
+  const lines = (level && level.trueLines && level.trueLines.length) || 1;
+  return lines + 2;
+}
+
+/** Slider ranges follow the level, so a 0.1-deep Fraunhofer line and a 4 K CO peak both work. */
+function sliderRanges(level) {
+  const amplitudes = level.trueLines.map((l) => l.amplitude);
+  const sigmas = level.trueLines.map((l) => l.sigma);
+  const range = level.xMax - level.xMin;
+  const amplitudeMax = Math.max.apply(null, amplitudes) * 1.3;
+  const sigmaMin = Math.max(0.005, Math.min.apply(null, sigmas) / 4);
+  const sigmaMax = Math.max.apply(null, sigmas) * 3;
+  return {
+    amplitudeMin: Math.max(0.01, amplitudeMax / 200),
+    amplitudeMax,
+    amplitudeStep: amplitudeMax / 200,
+    sigmaMin,
+    sigmaMax,
+    sigmaStep: (sigmaMax - sigmaMin) / 200,
+    centerStep: range / 500,
+    centerFineStep: range / 50000,
+  };
+}
+
+/** Neutral starting values for a new component: never the answer, just a sensible guess. */
+function componentDefaults(level) {
+  const amplitudes = level.trueLines.map((l) => l.amplitude).sort((a, b) => a - b);
+  const sigmas = level.trueLines.map((l) => l.sigma).sort((a, b) => a - b);
+  const mid = (arr) => arr[Math.floor(arr.length / 2)];
+  return {
+    amplitude: mid(amplitudes) || 1,
+    sigma: mid(sigmas) || 0.3,
+    tau: 0.5,
+  };
+}
+
+function describeTau(tau) {
+  if (!(tau > TAU_THIN)) return "thin (Gaussian)";
+  if (tau < 0.3) return "optically thin";
+  if (tau < 1.5) return "moderate";
+  if (tau < 6) return "optically thick";
+  return "saturated";
+}
+
+function tauToSlider(tau) {
+  const clamped = Math.min(TAU_MAX, Math.max(TAU_MIN, tau || TAU_MIN));
+  return (1000 * Math.log(clamped / TAU_MIN)) / Math.log(TAU_MAX / TAU_MIN);
+}
+
+function sliderToTau(sliderValue) {
+  return TAU_MIN * Math.pow(TAU_MAX / TAU_MIN, sliderValue / 1000);
+}
+
+/** Rough visible-light colour for a wavelength in nm, used for the solar plot backdrop. */
+function wavelengthToRgb(nm) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (nm >= 380 && nm < 440) {
+    r = (440 - nm) / 60;
+    b = 1;
+  } else if (nm < 490) {
+    g = (nm - 440) / 50;
+    b = 1;
+  } else if (nm < 510) {
+    g = 1;
+    b = (510 - nm) / 20;
+  } else if (nm < 580) {
+    r = (nm - 510) / 70;
+    g = 1;
+  } else if (nm < 645) {
+    r = 1;
+    g = (645 - nm) / 65;
+  } else if (nm <= 780) {
+    r = 1;
+  } else {
+    r = 0.35;
+  }
+  if (nm < 380) {
+    r = 0.25;
+    b = 0.6;
+  }
+  const to255 = (v) => Math.round(255 * Math.min(1, Math.max(0, v)));
+  return [to255(r), to255(g), to255(b)];
+}
+
 // ——— Shared UI bits ———
 
-function CdmsLearnMore() {
+function CdmsLearnMore(props) {
+  const solar = props && props.solar;
   return React.createElement(
     "div",
     { className: "cdms-block" },
@@ -515,7 +1138,9 @@ function CdmsLearnMore() {
       React.createElement(
         "p",
         { className: "cdms-copy" },
-        "Line frequencies come from the Cologne Database for Molecular Spectroscopy (CDMS)."
+        solar
+          ? "The solar wavelengths are the classic Fraunhofer lines from standard line tables; the radio levels use rest frequencies from the Cologne Database for Molecular Spectroscopy (CDMS)."
+          : "Line frequencies come from the Cologne Database for Molecular Spectroscopy (CDMS)."
       ),
       React.createElement(
         "a",
@@ -537,8 +1162,8 @@ function StarsDisplay(props) {
   const n = props.stars || 0;
   return React.createElement(
     "span",
-    { className: "stars", "aria-label": n + " stars" },
-    [1, 2, 3].map((i) =>
+    { className: "stars", "aria-label": n + " of 5 stars" },
+    [1, 2, 3, 4, 5].map((i) =>
       React.createElement("span", { key: i, className: i <= n ? "star on" : "star" }, "★")
     )
   );
@@ -570,57 +1195,172 @@ function LeaderboardPanel(props) {
       { className: "leaderboard-intro" },
       "Top ",
       LEADERBOARD_TOP_N,
-      " scores per level on this device (lower mean error is better)."
+      " scores per level on this device (lower mean error is better). Each level has its own",
+      " precision target, so wide scans are not compared against the warm-up."
     ),
-    React.createElement(
-      "div",
-      { className: "leaderboard-levels" },
-      LEVELS.map((lvl) => {
-        const list = Array.isArray(board[String(lvl.id)]) ? board[String(lvl.id)] : [];
-        return React.createElement(
+    TRACKS.map((track) =>
+      React.createElement(
+        "div",
+        { key: track.key, className: "leaderboard-track" },
+        React.createElement(
           "div",
-          { key: lvl.id, className: "leaderboard-level-block" },
-          React.createElement(
-            "div",
-            { className: "leaderboard-level-title" },
-            "L",
-            lvl.id,
-            " — ",
-            lvl.name.replace(/^Level \d+ – /, "")
-          ),
-          list.length === 0
-            ? React.createElement(
-                "p",
-                { className: "leaderboard-empty" },
-                "No scores yet — be the first!"
-              )
-            : React.createElement(
-                "ol",
-                { className: "leaderboard-list" },
-                list.map((entry, i) =>
-                  React.createElement(
-                    "li",
-                    { key: entry.at + "-" + entry.name + "-" + i },
-                    React.createElement("span", { className: "lb-rank" }, i + 1, "."),
-                    React.createElement("span", { className: "lb-name" }, entry.name),
-                    React.createElement(StarsDisplay, { stars: entry.stars }),
-                    React.createElement(
-                      "span",
-                      { className: "lb-stats" },
-                      isFinite(entry.meanErr) ? entry.meanErr.toFixed(2) : "—",
-                      "%",
+          { className: "leaderboard-track-title" },
+          track.label,
+          track.key === "solar" ? " — Fraunhofer absorption lines" : " — CDMS emission and absorption"
+        ),
+        React.createElement(
+          "div",
+          { className: "leaderboard-levels" },
+          LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
+            const list = Array.isArray(board[String(lvl.id)]) ? board[String(lvl.id)] : [];
+            const bands = starBandsForLevel(lvl);
+            return React.createElement(
+              "div",
+              { key: lvl.id, className: "leaderboard-level-block" },
+              React.createElement(
+                "div",
+                { className: "leaderboard-level-title" },
+                "L",
+                lvl.id,
+                " — ",
+                lvl.name.replace(/^Level \d+ – /, "")
+              ),
+              list.length === 0
+                ? React.createElement(
+                    "p",
+                    { className: "leaderboard-empty" },
+                    "No scores yet — be the first!"
+                  )
+                : React.createElement(
+                    "ol",
+                    { className: "leaderboard-list" },
+                    list.map((entry, i) =>
                       React.createElement(
-                        "span",
-                        { className: "lb-mse" },
-                        " · MSE ",
-                        isFinite(entry.mse) ? entry.mse.toFixed(4) : "—"
+                        "li",
+                        { key: entry.at + "-" + entry.name + "-" + i },
+                        React.createElement("span", { className: "lb-rank" }, i + 1, "."),
+                        React.createElement("span", { className: "lb-name" }, entry.name),
+                        React.createElement(StarsDisplay, {
+                          stars:
+                            entry.stars != null
+                              ? entry.stars
+                              : starsFromMeanError(entry.meanErr, bands),
+                        }),
+                        React.createElement(
+                          "span",
+                          { className: "lb-stats" },
+                          isFinite(entry.meanErr) ? entry.meanErr.toFixed(3) : "—",
+                          "% mean err",
+                          React.createElement(
+                            "span",
+                            { className: "lb-mse" },
+                            " · MSE ",
+                            isFinite(entry.mse) ? entry.mse.toFixed(4) : "—"
+                          )
+                        )
                       )
                     )
                   )
+            );
+          })
+        )
+      )
+    )
+  );
+}
+
+/** "Level 8 – CO ladder scan" → "CO ladder scan". */
+function levelShortName(level) {
+  const dash = level.name.indexOf("–");
+  return dash >= 0 ? level.name.slice(dash + 1).trim() : level.name;
+}
+
+function levelBandLabel(level) {
+  const axis = axisOf(level);
+  return level.xMin + "–" + level.xMax + " " + axis.unit;
+}
+
+/** Every level is playable from the start — visitors pick what they like the look of. */
+function LevelPicker(props) {
+  const board = props.board || {};
+  return React.createElement(
+    "div",
+    { className: "panel level-picker" },
+    React.createElement("div", { className: "panel-title" }, "Choose a level"),
+    React.createElement(
+      "p",
+      { className: "level-picker-intro" },
+      "Nothing is locked — start anywhere, in any order, and switch levels at any time from the buttons in the header."
+    ),
+    TRACKS.map((track) =>
+      React.createElement(
+        "div",
+        { key: track.key, className: "picker-track" },
+        React.createElement(
+          "div",
+          { className: "picker-track-title" },
+          track.label,
+          track.key === "radio"
+            ? " — molecular emission lines (CDMS)"
+            : " — solar Fraunhofer absorption lines"
+        ),
+        React.createElement(
+          "div",
+          { className: "picker-grid" },
+          LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
+            const idx = LEVELS.indexOf(lvl);
+            const best = (board[String(lvl.id)] || [])[0];
+            const scored = lvl.trueLines.filter(isGradedLine).length;
+            return React.createElement(
+              "button",
+              {
+                key: lvl.id,
+                type: "button",
+                className: "level-card" + (best ? " level-card-played" : ""),
+                onClick: () => props.onPlay(idx),
+              },
+              React.createElement(
+                "span",
+                { className: "level-card-head" },
+                React.createElement("span", { className: "level-card-id" }, "L" + lvl.id),
+                React.createElement("span", { className: "level-card-name" }, levelShortName(lvl)),
+                React.createElement(
+                  "span",
+                  { className: "mode-pill " + (lvl.mode === "absorption" ? "absorption" : "emission") },
+                  lvl.mode === "absorption" ? "Absorption" : "Emission"
                 )
-              )
-        );
-      })
+              ),
+              React.createElement(
+                "span",
+                { className: "level-card-meta" },
+                levelBandLabel(lvl),
+                " · ",
+                scored,
+                scored === 1 ? " line to fit" : " lines to fit"
+              ),
+              best
+                ? React.createElement(
+                    "span",
+                    { className: "level-card-best" },
+                    React.createElement(StarsDisplay, {
+                      stars:
+                        best.stars != null
+                          ? best.stars
+                          : starsFromMeanError(best.meanErr, starBandsForLevel(lvl)),
+                    }),
+                    " best: ",
+                    best.name,
+                    isFinite(best.meanErr) ? " (" + best.meanErr.toFixed(3) + "%)" : ""
+                  )
+                : React.createElement(
+                    "span",
+                    { className: "level-card-best level-card-unplayed" },
+                    "Not played yet"
+                  )
+            );
+          })
+        )
+      )
     )
   );
 }
@@ -641,14 +1381,19 @@ function AttractScreen(props) {
       React.createElement(
         "ul",
         { className: "attract-howto" },
-        React.createElement("li", null, "Add Gaussian components for each spectral line you see."),
+        React.createElement("li", null, "Add one component for each spectral line you can see."),
         React.createElement(
           "li",
           null,
-          "Tune amplitude, center (GHz), and width until the green model matches the blue data."
+          "Tune peak, position, width and optical depth until the green model matches the blue data."
         ),
-        React.createElement("li", null, "Submit your fit — pass when every line center is within 5%."),
-        React.createElement("li", null, "Then hear your fitted frequencies as scaled audio tones.")
+        React.createElement(
+          "li",
+          null,
+          "Radio levels show bright emission lines; the solar levels show dark Fraunhofer absorption lines."
+        ),
+        React.createElement("li", null, "Submit your fit — pass when every scored line is close enough."),
+        React.createElement("li", null, "Then hear your fitted lines as audible tones.")
       ),
       React.createElement(
         "div",
@@ -656,169 +1401,325 @@ function AttractScreen(props) {
         React.createElement(
           "button",
           { type: "button", className: "primary-button large-button", onClick: props.onStart },
-          "Start playing"
+          "Start with Level 1"
+        ),
+        React.createElement(
+          "span",
+          { className: "attract-actions-hint" },
+          "…or pick any level below."
         )
       )
     ),
+    React.createElement(LevelPicker, { board: props.board, onPlay: props.onPlayLevel }),
     React.createElement(LeaderboardPanel, { board: props.board, onReset: props.onResetLeaderboard }),
-    React.createElement(CdmsLearnMore)
+    React.createElement(CdmsLearnMore, { solar: true })
   );
 }
 
 // ——— Game view ———
 
+/** Faint rainbow behind the solar plots, so visitors see where in the spectrum a line sits. */
+const spectrumBackdropPlugin = {
+  id: "spectrumBackdrop",
+  beforeDatasetsDraw(chart) {
+    const area = chart.chartArea;
+    const xScale = chart.scales.x;
+    if (!area || !xScale) return;
+    const ctx = chart.ctx;
+    const gradient = ctx.createLinearGradient(area.left, 0, area.right, 0);
+    const steps = 24;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const rgb = wavelengthToRgb(xScale.min + t * (xScale.max - xScale.min));
+      gradient.addColorStop(t, "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.16)");
+    }
+    ctx.save();
+    ctx.fillStyle = gradient;
+    ctx.fillRect(area.left, area.top, area.right - area.left, area.bottom - area.top);
+    ctx.restore();
+  },
+};
+
+const COMPONENT_COLORS = [
+  "rgba(248, 113, 113, 0.9)",
+  "rgba(251, 191, 36, 0.9)",
+  "rgba(129, 230, 217, 0.9)",
+  "rgba(196, 181, 253, 0.9)",
+  "rgba(244, 114, 182, 0.9)",
+  "rgba(147, 197, 253, 0.9)",
+  "rgba(253, 186, 116, 0.9)",
+  "rgba(167, 243, 208, 0.9)",
+  "rgba(216, 180, 254, 0.9)",
+  "rgba(252, 165, 165, 0.9)",
+  "rgba(134, 239, 172, 0.9)",
+  "rgba(253, 224, 71, 0.9)",
+  "rgba(125, 211, 252, 0.9)",
+  "rgba(240, 171, 252, 0.9)",
+  "rgba(254, 215, 170, 0.9)",
+  "rgba(153, 246, 228, 0.9)",
+  "rgba(191, 219, 254, 0.9)",
+  "rgba(254, 205, 211, 0.9)",
+  "rgba(221, 214, 254, 0.9)",
+  "rgba(187, 247, 208, 0.9)",
+];
+
 function SpectrumGameView(props) {
   const { level, onCompletion } = props;
+  const axis = axisOf(level);
+  const absorb = isAbsorption(level.mode);
+  const ranges = React.useMemo(() => sliderRanges(level), [level]);
+  const defaults = React.useMemo(() => componentDefaults(level), [level]);
   const [spectrum] = React.useState(() => generateSpectrum(level));
-  const [playerGaussians, setPlayerGaussians] = React.useState(() => [
+  const [components, setComponents] = React.useState(() => [
     {
       id: 1,
-      amplitude: level.trueLines[0]?.amplitude ?? 3,
+      amplitude: defaults.amplitude,
       center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-      sigma: level.trueLines[0]?.sigma ?? 0.25,
+      sigma: defaults.sigma,
+      tau: defaults.tau,
     },
   ]);
-  const [chartRef, setChartRef] = React.useState(null);
-  const chartInstanceRef = React.useRef(null);
+  const [selectedId, setSelectedId] = React.useState(1);
+  const [logY, setLogY] = React.useState(false);
+  const [chartCanvas, setChartCanvas] = React.useState(null);
+  const chartRef = React.useRef(null);
+  const chartSignatureRef = React.useRef("");
+  const clickHandlerRef = React.useRef(() => {});
   const [mse, setMse] = React.useState(NaN);
+  const [fitPct, setFitPct] = React.useState(NaN);
   const [completed, setCompleted] = React.useState(false);
   const [completionSummary, setCompletionSummary] = React.useState(null);
 
-  const modelY = React.useMemo(() => {
-    const gs = playerGaussians.map((g) => ({
-      amplitude: g.amplitude,
-      center: g.center,
-      sigma: g.sigma,
-    }));
-    return sumGaussians(spectrum.x, gs, level.baseline);
-  }, [playerGaussians, spectrum.x, level.baseline]);
+  const gradedLines = React.useMemo(
+    () => spectrum.trueLines.filter(isGradedLine),
+    [spectrum.trueLines]
+  );
+  const coarseX = React.useMemo(() => linspace(level.xMin, level.xMax, 500), [level]);
+  const maxComponents = maxComponentsForLevel(level);
+
+  const modelY = React.useMemo(
+    () => composeSpectrum(spectrum.x, components, level.baseline, level.mode),
+    [components, spectrum.x, level.baseline, level.mode]
+  );
 
   React.useEffect(() => {
     setMse(meanSquaredError(spectrum.y, modelY));
+    setFitPct(normalizedFitPercent(spectrum.y, modelY));
   }, [modelY, spectrum.y]);
 
-  React.useEffect(() => {
-    if (!chartRef) return;
-    const ctx = chartRef.getContext("2d");
-    if (!ctx) return;
-    if (chartInstanceRef.current) chartInstanceRef.current.destroy();
-
-    const colors = [
-      "rgba(248, 113, 113, 0.9)",
-      "rgba(251, 191, 36, 0.9)",
-      "rgba(52, 211, 153, 0.9)",
-      "rgba(96, 165, 250, 0.9)",
-      "rgba(244, 114, 182, 0.9)",
-    ];
-    const gaussianDatasets = playerGaussians.map((g, idx) => ({
-      label: "Gaussian " + (idx + 1),
-      data: evaluateGaussian(spectrum.x, {
-        amplitude: g.amplitude,
-        center: g.center,
-        sigma: g.sigma,
-      }).map((v) => v + level.baseline),
-      borderColor: colors[idx % colors.length],
-      pointRadius: 0,
-      borderWidth: 1,
+  function buildDatasets() {
+    const clip = (v) => (logY ? Math.max(LOG_Y_FLOOR, v) : v);
+    const toPoints = (xs, ys) => xs.map((xi, i) => ({ x: xi, y: clip(ys[i]) }));
+    const componentSets = components.map((component, idx) => ({
+      label: "Component " + (idx + 1),
+      data: toPoints(coarseX, componentCurve(coarseX, component, level.baseline, level.mode)),
+      borderColor: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
+      borderWidth: component.id === selectedId ? 2 : 1,
       borderDash: [4, 3],
+      pointRadius: 0,
     }));
-
-    chartInstanceRef.current = new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: spectrum.x,
-        datasets: [
-          {
-            label: "Observed spectrum",
-            data: spectrum.y,
-            borderColor: "rgba(96, 165, 250, 1)",
-            pointRadius: 0,
-            borderWidth: 1.5,
-          },
-          {
-            label: "Model fit",
-            data: modelY,
-            borderColor: "rgba(52, 211, 153, 1)",
-            pointRadius: 0,
-            borderWidth: 1.5,
-          },
-          ...gaussianDatasets,
-        ],
+    return [
+      {
+        label: absorb ? "Observed spectrum (absorption)" : "Observed spectrum",
+        data: toPoints(spectrum.x, spectrum.y),
+        borderColor: "rgba(96, 165, 250, 1)",
+        borderWidth: 1.5,
+        pointRadius: 0,
       },
-      options: {
-        responsive: true,
-        animation: false,
-        plugins: { legend: { labels: { color: "#e5e5ff" } } },
-        scales: {
-          x: {
-            ticks: { color: "#a5b4fc", maxTicksLimit: 8 },
-            title: { display: true, text: "Frequency (GHz)", color: "#e5e5ff" },
+      {
+        label: "Model fit",
+        data: toPoints(spectrum.x, modelY),
+        borderColor: "rgba(52, 211, 153, 1)",
+        borderWidth: 1.8,
+        pointRadius: 0,
+      },
+    ].concat(componentSets);
+  }
+
+  React.useEffect(() => {
+    clickHandlerRef.current = (evt) => {
+      const chart = chartRef.current;
+      if (!chart || !chart.scales || !chart.scales.x) return;
+      const value = chart.scales.x.getValueForPixel(evt.x);
+      if (value == null || !isFinite(value)) return;
+      const clamped = Math.min(level.xMax, Math.max(level.xMin, value));
+      handleUpdateComponent(selectedId, "center", clamped);
+    };
+  });
+
+  React.useEffect(() => {
+    if (!chartCanvas || typeof Chart !== "function") return;
+    const signature = level.id + "|" + (logY ? "log" : "lin");
+    if (chartRef.current && chartSignatureRef.current !== signature) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    if (!chartRef.current) {
+      const ctx = chartCanvas.getContext("2d");
+      if (!ctx) return;
+      chartRef.current = new Chart(ctx, {
+        type: "line",
+        data: { datasets: buildDatasets() },
+        plugins: level.showSpectrumColors ? [spectrumBackdropPlugin] : [],
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          normalized: true,
+          parsing: false,
+          onClick: (evt) => clickHandlerRef.current(evt),
+          plugins: {
+            legend: { labels: { color: "#e5e5ff", boxWidth: 12, font: { size: 10 } } },
+            tooltip: { enabled: false },
           },
-          y: {
-            ticks: { color: "#a5b4fc" },
-            title: { display: true, text: "Intensity", color: "#e5e5ff" },
+          scales: {
+            x: {
+              type: "linear",
+              min: level.xMin,
+              max: level.xMax,
+              ticks: { color: "#a5b4fc", maxTicksLimit: 8 },
+              title: { display: true, text: axis.axisTitle, color: "#e5e5ff" },
+            },
+            y: {
+              type: logY ? "logarithmic" : "linear",
+              beginAtZero: !logY,
+              ticks: { color: "#a5b4fc" },
+              title: {
+                display: true,
+                text: absorb ? "Intensity (continuum = " + level.baseline + ")" : "Intensity",
+                color: "#e5e5ff",
+              },
+            },
           },
         },
-      },
-    });
-  }, [chartRef, spectrum.x, spectrum.y, modelY, playerGaussians, level.baseline]);
+      });
+      chartSignatureRef.current = signature;
+      chartCanvas.style.cursor = "crosshair";
+    } else {
+      chartRef.current.data.datasets = buildDatasets();
+      chartRef.current.update("none");
+    }
+  }, [chartCanvas, level, logY, spectrum, modelY, components, selectedId]);
 
-  function handleSetCount(count) {
-    const clamped = Math.max(1, Math.min(count, level.maxGaussians));
-    setPlayerGaussians((prev) => {
-      const arr = [...prev];
-      if (arr.length < clamped) {
-        while (arr.length < clamped) {
-          const guessCenter =
-            spectrum.x[Math.floor(((arr.length + 1) / (clamped + 1)) * spectrum.x.length)] ??
-            spectrum.x[0];
-          arr.push({
-            id: arr.length ? Math.max(...arr.map((g) => g.id)) + 1 : 1,
-            amplitude: level.trueLines[0]?.amplitude ?? 2.5,
-            center: guessCenter,
-            sigma: level.trueLines[0]?.sigma ?? 0.25,
-          });
-        }
-      } else if (arr.length > clamped) {
-        arr.length = clamped;
+  React.useEffect(
+    () => () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
       }
-      return arr;
+    },
+    []
+  );
+
+  /**
+   * The strongest feature the current model does not explain yet, so each new component
+   * lands on the next real line instead of on empty sky or on top of the previous one.
+   */
+  function unexplainedFeature(current) {
+    const model = composeSpectrum(spectrum.x, current, level.baseline, level.mode);
+    let bestIdx = -1;
+    let bestGap = 0;
+    for (let i = 0; i < spectrum.x.length; i++) {
+      const gap = absorb ? model[i] - spectrum.y[i] : spectrum.y[i] - model[i];
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx < 0 || bestGap < level.noiseLevel * 2) return null;
+    return {
+      center: spectrum.x[bestIdx],
+      amplitude: Math.min(ranges.amplitudeMax, Math.max(ranges.amplitudeMin, bestGap)),
+    };
+  }
+
+  function handleAddComponent() {
+    setComponents((prev) => {
+      if (prev.length >= maxComponents) return prev;
+      const nextId = prev.length ? Math.max.apply(null, prev.map((c) => c.id)) + 1 : 1;
+      const feature = unexplainedFeature(prev);
+      const fraction = (prev.length + 1) / (prev.length + 2);
+      const next = {
+        id: nextId,
+        amplitude: feature ? feature.amplitude : defaults.amplitude,
+        center: feature
+          ? feature.center
+          : level.xMin + fraction * (level.xMax - level.xMin),
+        sigma: defaults.sigma,
+        tau: defaults.tau,
+      };
+      setSelectedId(nextId);
+      return prev.concat([next]);
     });
   }
 
-  function handleUpdateGaussian(id, field, value) {
-    setPlayerGaussians((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)));
+  function handleRemoveComponent(id) {
+    setComponents((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((c) => c.id !== id);
+      if (id === selectedId && next.length) setSelectedId(next[0].id);
+      return next;
+    });
+  }
+
+  function handleUpdateComponent(id, field, value) {
+    setComponents((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+  }
+
+  function handleNudgeCenter(id, delta) {
+    setComponents((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, center: Math.min(level.xMax, Math.max(level.xMin, c.center + delta)) }
+          : c
+      )
+    );
   }
 
   function handleReset() {
-    setPlayerGaussians([
+    setComponents([
       {
         id: 1,
-        amplitude: level.trueLines[0]?.amplitude ?? 3,
+        amplitude: defaults.amplitude,
         center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-        sigma: level.trueLines[0]?.sigma ?? 0.25,
+        sigma: defaults.sigma,
+        tau: defaults.tau,
       },
     ]);
+    setSelectedId(1);
     setCompleted(false);
     setCompletionSummary(null);
   }
 
   function handleSubmit() {
-    const lineErrors = computeLineErrors(spectrum.trueLines, playerGaussians);
+    const lineErrors = computeLineErrors(gradedLines, components);
     const allWithin = lineErrors.every(
       (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
     );
+    // Weak lines never decide the pass, but a player who fits them anyway gets the credit.
+    const claimed = new Set(lineErrors.map((le) => le.matchedGaussian && le.matchedGaussian.id));
+    const spare = components.filter((c) => !claimed.has(c.id));
+    const extraLines = spectrum.trueLines.filter((line) => !isGradedLine(line));
+    const bonusErrors = computeLineErrors(extraLines, spare).filter(
+      (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
+    );
     const meanErr = meanPercentError(lineErrors);
-    const stars = starsFromMeanError(meanErr);
-    const fittedGHz = lineErrors
-      .map((le) => (le.matchedGaussian ? le.matchedGaussian.center : null))
-      .filter((v) => v != null);
-    const sonification = scaleFrequenciesToAudible(fittedGHz);
+    const stars = starsFromMeanError(meanErr, starBandsForLevel(level));
+    const fittedCenters = lineErrors.map((le) =>
+      le.matchedGaussian ? le.matchedGaussian.center : null
+    );
+    const sonification = sonifyAxisValues(fittedCenters, level);
     const summary = {
       levelId: level.id,
       levelName: level.name,
+      axis: level.axis || "GHz",
+      mode: level.mode || "emission",
+      track: level.track,
       lineErrors,
+      bonusErrors,
+      extraLineCount: extraLines.length,
       mse,
+      fitPct,
       meanErr,
       stars,
       sonification,
@@ -829,7 +1730,8 @@ function SpectrumGameView(props) {
     if (allWithin) onCompletion(summary);
   }
 
-  const fitQuality = describeFitQuality(mse);
+  const fitQuality = describeFitQuality(fitPct);
+  const amplitudeLabel = absorb ? "Peak depth" : "Peak height";
 
   return React.createElement(
     "div",
@@ -837,24 +1739,61 @@ function SpectrumGameView(props) {
     React.createElement(
       "div",
       { className: "panel" },
-      React.createElement("div", { className: "panel-title" }, level.name),
-      React.createElement("canvas", { ref: setChartRef, className: "plot-canvas" }),
+      React.createElement(
+        "div",
+        { className: "plot-header" },
+        React.createElement("div", { className: "panel-title" }, level.name),
+        React.createElement(
+          "div",
+          { className: "plot-header-right" },
+          React.createElement(
+            "span",
+            { className: "mode-pill " + (absorb ? "absorption" : "emission") },
+            absorb ? "Absorption" : "Emission"
+          ),
+          level.allowLogY &&
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button tiny-button",
+                onClick: () => setLogY((v) => !v),
+                "aria-pressed": logY,
+              },
+              logY ? "Linear scale" : "Stretch weak lines (log)"
+            )
+        )
+      ),
+      level.blurb && React.createElement("p", { className: "level-blurb" }, level.blurb),
+      React.createElement(
+        "div",
+        { className: "plot-wrap" },
+        React.createElement("canvas", { ref: setChartCanvas, className: "plot-canvas" })
+      ),
       React.createElement(
         "div",
         { className: "fit-quality " + fitQuality.cls },
         "Fit quality: ",
         fitQuality.label,
-        " (MSE = ",
-        Number.isFinite(mse) ? mse.toFixed(3) : "—",
-        ")"
+        " (spectrum mismatch ≈ ",
+        Number.isFinite(fitPct) ? fitPct.toFixed(1) : "—",
+        "% of intensity range)"
       ),
+        React.createElement(
+          "div",
+          { className: "plot-hint" },
+          "Click the plot to move the selected component there. Every line drawn here can be",
+          " fitted — the weak ones just don't count towards the pass."
+        ),
       completed &&
         React.createElement(
           "div",
           { className: "completion-banner" },
-          "Level completed! All visible lines fitted within ",
+          "Level completed! Every scored line fitted within ",
           level.errorThresholdPercent,
-          "% in center frequency."
+          "% in ",
+          axis.key === "nm" ? "wavelength" : "center frequency",
+          "."
         )
     ),
     React.createElement(
@@ -866,7 +1805,7 @@ function SpectrumGameView(props) {
         React.createElement(
           "div",
           { className: "controls-header" },
-          React.createElement("span", { className: "panel-title" }, "Gaussian components"),
+          React.createElement("span", { className: "panel-title" }, "Line components"),
           React.createElement(
             "div",
             { className: "controls-header-right" },
@@ -874,86 +1813,203 @@ function SpectrumGameView(props) {
               "span",
               { className: "count-label" },
               "Count: ",
-              playerGaussians.length,
+              components.length,
               " / ",
-              level.maxGaussians
+              maxComponents
             ),
             React.createElement(
               "button",
               {
                 type: "button",
                 className: "secondary-button",
-                onClick: () => handleSetCount(playerGaussians.length + 1),
+                onClick: handleAddComponent,
+                disabled: components.length >= maxComponents,
               },
-              "+ Gaussian"
+              "+ Component"
             )
           )
         ),
-        playerGaussians.map((g, idx) =>
-          React.createElement(
-            "div",
-            { key: g.id, className: "gaussian-row" },
+        React.createElement(
+          "div",
+          { className: "component-list" },
+          components.map((component, idx) =>
             React.createElement(
               "div",
-              { className: "gaussian-row-header" },
-              React.createElement("span", null, "Gaussian ", idx + 1)
-            ),
-            React.createElement(
-              "div",
-              { className: "slider-group" },
+              {
+                key: component.id,
+                className:
+                  "gaussian-row" + (component.id === selectedId ? " gaussian-row-selected" : ""),
+                onClick: () => setSelectedId(component.id),
+              },
               React.createElement(
                 "div",
-                { className: "slider-label" },
-                React.createElement("span", null, "Amplitude"),
-                React.createElement("span", { className: "value" }, g.amplitude.toFixed(2))
+                { className: "gaussian-row-header" },
+                React.createElement(
+                  "span",
+                  null,
+                  React.createElement("span", {
+                    className: "component-swatch",
+                    style: { background: COMPONENT_COLORS[idx % COMPONENT_COLORS.length] },
+                  }),
+                  "Component ",
+                  idx + 1,
+                  component.id === selectedId
+                    ? React.createElement("span", { className: "selected-tag" }, "selected")
+                    : null
+                ),
+                components.length > 1 &&
+                  React.createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className: "secondary-button tiny-button",
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        handleRemoveComponent(component.id);
+                      },
+                    },
+                    "Remove"
+                  )
               ),
-              React.createElement("input", {
-                type: "range",
-                min: 0.5,
-                max: 5,
-                step: 0.1,
-                value: g.amplitude,
-                className: "slider-input",
-                onChange: (e) => handleUpdateGaussian(g.id, "amplitude", parseFloat(e.target.value)),
-              })
-            ),
-            React.createElement(
-              "div",
-              { className: "slider-group" },
               React.createElement(
                 "div",
-                { className: "slider-label" },
-                React.createElement("span", null, "Center (GHz, CDMS)"),
-                React.createElement("span", { className: "value" }, g.center.toFixed(2))
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, amplitudeLabel),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    component.amplitude.toFixed(2)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: ranges.amplitudeMin,
+                  max: ranges.amplitudeMax,
+                  step: ranges.amplitudeStep,
+                  value: component.amplitude,
+                  className: "slider-input",
+                  onChange: (e) =>
+                    handleUpdateComponent(component.id, "amplitude", parseFloat(e.target.value)),
+                })
               ),
-              React.createElement("input", {
-                type: "range",
-                min: level.xMin,
-                max: level.xMax,
-                step: (level.xMax - level.xMin) / 200,
-                value: g.center,
-                className: "slider-input",
-                onChange: (e) => handleUpdateGaussian(g.id, "center", parseFloat(e.target.value)),
-              })
-            ),
-            React.createElement(
-              "div",
-              { className: "slider-group" },
               React.createElement(
                 "div",
-                { className: "slider-label" },
-                React.createElement("span", null, "Width (sigma)"),
-                React.createElement("span", { className: "value" }, g.sigma.toFixed(2))
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, axis.centerLabel),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    formatAxisValue(component.center, axis.key)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: level.xMin,
+                  max: level.xMax,
+                  step: ranges.centerStep,
+                  value: component.center,
+                  className: "slider-input",
+                  onChange: (e) =>
+                    handleUpdateComponent(component.id, "center", parseFloat(e.target.value)),
+                }),
+                React.createElement(
+                  "div",
+                  { className: "fine-row" },
+                  React.createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className: "secondary-button tiny-button",
+                      onClick: () => handleNudgeCenter(component.id, -ranges.centerFineStep),
+                      "aria-label": "Nudge center down",
+                    },
+                    "−"
+                  ),
+                  React.createElement("input", {
+                    type: "number",
+                    className: "fine-input",
+                    min: level.xMin,
+                    max: level.xMax,
+                    step: ranges.centerFineStep,
+                    value: component.center,
+                    onChange: (e) => {
+                      const v = parseFloat(e.target.value);
+                      if (isFinite(v)) handleUpdateComponent(component.id, "center", v);
+                    },
+                  }),
+                  React.createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className: "secondary-button tiny-button",
+                      onClick: () => handleNudgeCenter(component.id, ranges.centerFineStep),
+                      "aria-label": "Nudge center up",
+                    },
+                    "+"
+                  ),
+                  React.createElement("span", { className: "fine-unit" }, axis.unit)
+                )
               ),
-              React.createElement("input", {
-                type: "range",
-                min: 0.05,
-                max: 1.2,
-                step: 0.01,
-                value: g.sigma,
-                className: "slider-input",
-                onChange: (e) => handleUpdateGaussian(g.id, "sigma", parseFloat(e.target.value)),
-              })
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Width (sigma)"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    component.sigma.toFixed(axis.key === "nm" ? 3 : 2)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: ranges.sigmaMin,
+                  max: ranges.sigmaMax,
+                  step: ranges.sigmaStep,
+                  value: component.sigma,
+                  className: "slider-input",
+                  onChange: (e) =>
+                    handleUpdateComponent(component.id, "sigma", parseFloat(e.target.value)),
+                })
+              ),
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Optical depth τ"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    component.tau.toFixed(2),
+                    " — ",
+                    describeTau(component.tau)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: 0,
+                  max: 1000,
+                  step: 1,
+                  value: tauToSlider(component.tau),
+                  className: "slider-input",
+                  onChange: (e) =>
+                    handleUpdateComponent(
+                      component.id,
+                      "tau",
+                      sliderToTau(parseFloat(e.target.value))
+                    ),
+                })
+              )
             )
           )
         ),
@@ -979,20 +2035,38 @@ function SpectrumGameView(props) {
         React.createElement(
           "div",
           { className: "hud-metrics" },
-          React.createElement("div", { className: "metric-pill" }, "True lines: ", spectrum.trueLines.length),
-          React.createElement("div", { className: "metric-pill" }, "Max Gaussians: ", level.maxGaussians),
+          React.createElement(
+            "div",
+            { className: "metric-pill" },
+            "Scored lines: ",
+            gradedLines.length,
+            gradedLines.length < spectrum.trueLines.length
+              ? " of " + spectrum.trueLines.length
+              : ""
+          ),
+          React.createElement("div", { className: "metric-pill" }, "Max components: ", maxComponents),
           React.createElement(
             "div",
             { className: "metric-pill" },
             "Threshold: ",
             level.errorThresholdPercent,
-            "% center error"
+            "% in ",
+            axis.unit
           )
         ),
         React.createElement(
           "div",
           { className: "hud-status" },
-          'Frequencies are real astronomical lines (CDMS). Match the model (green) to the spectrum (blue), then click "Submit fit".'
+          axis.key === "nm"
+            ? "Wavelengths are real solar Fraunhofer lines. Match the model (green) to the spectrum (blue), then click \"Submit fit\"."
+            : 'Frequencies are real astronomical lines (CDMS). Match the model (green) to the spectrum (blue), then click "Submit fit".'
+        ),
+        React.createElement(
+          "div",
+          { className: "hud-status" },
+          "Optical depth τ shapes each line: small τ gives a Gaussian, large τ saturates it into a flat ",
+          absorb ? "dark core" : "top",
+          "."
         ),
         completionSummary &&
           React.createElement(
@@ -1001,7 +2075,9 @@ function SpectrumGameView(props) {
             React.createElement(
               "div",
               { style: { fontSize: "0.8rem", marginBottom: 4 } },
-              "Line summary — frequencies in GHz (CDMS)"
+              axis.key === "nm"
+                ? "Line summary — wavelengths in nm (Fraunhofer)"
+                : "Line summary — frequencies in GHz (CDMS)"
             ),
             React.createElement(
               "table",
@@ -1012,9 +2088,9 @@ function SpectrumGameView(props) {
                 React.createElement(
                   "tr",
                   null,
-                  React.createElement("th", null, "Frequency (GHz)"),
-                  React.createElement("th", null, "Molecule"),
-                  React.createElement("th", null, "Fitted frequency (GHz)"),
+                  React.createElement("th", null, "True (" + axis.unit + ")"),
+                  React.createElement("th", null, axis.key === "nm" ? "Element" : "Molecule"),
+                  React.createElement("th", null, "Fitted (" + axis.unit + ")"),
                   React.createElement("th", { className: "error-cell" }, "Error %")
                 )
               ),
@@ -1022,12 +2098,13 @@ function SpectrumGameView(props) {
                 "tbody",
                 null,
                 completionSummary.lineErrors.map((le, idx) => {
-                  const fittedGHz = le.matchedGaussian ? le.matchedGaussian.center : null;
-                  const closest = fittedGHz != null ? findClosestCDMSLine(fittedGHz) : null;
+                  const fitted = le.matchedGaussian ? le.matchedGaussian.center : null;
+                  const closest = findClosestCatalogLine(fitted, axis.key);
+                  const tolerance = (level.xMax - level.xMin) * 0.02;
                   return React.createElement(
                     "tr",
                     { key: idx },
-                    React.createElement("td", null, le.line.center.toFixed(4)),
+                    React.createElement("td", null, formatAxisValue(le.line.center, axis.key)),
                     React.createElement(
                       "td",
                       null,
@@ -1040,17 +2117,17 @@ function SpectrumGameView(props) {
                     React.createElement(
                       "td",
                       null,
-                      fittedGHz != null
+                      fitted != null
                         ? React.createElement(
                             "span",
                             null,
-                            fittedGHz.toFixed(4),
-                            closest && Math.abs(closest.frequencyGHz - fittedGHz) < 0.5
+                            formatAxisValue(fitted, axis.key),
+                            closest && Math.abs(closest.value - fitted) < tolerance
                               ? React.createElement(
                                   "span",
                                   { style: { marginLeft: 6, opacity: 0.85, fontSize: "0.75rem" } },
                                   "→ ",
-                                  closest.molecule
+                                  closest.species
                                 )
                               : null
                           )
@@ -1064,7 +2141,13 @@ function SpectrumGameView(props) {
                   );
                 })
               )
-            )
+            ),
+            completionSummary.extraLineCount > 0 &&
+              React.createElement(
+                "div",
+                { className: "hud-status hud-bonus" },
+                describeBonusLines(completionSummary)
+              )
           )
       )
     )
@@ -1127,10 +2210,11 @@ function App() {
     setLeaderboard(clearLeaderboard());
   }
 
-  async function handleStart() {
+  async function handleStart(startIndex) {
+    const idx = Number.isInteger(startIndex) && LEVELS[startIndex] ? startIndex : 0;
     await ensureAudioReady();
     setScreen("play");
-    setLevelIndex(0);
+    setLevelIndex(idx);
     setCompletionModal(null);
     setPlayerName("");
     setLeaderboardMsg("");
@@ -1174,9 +2258,13 @@ function App() {
 
   function downloadCompletionCSV() {
     if (!completionModal || !completionModal.lineErrors) return;
+    const axisKey = completionModal.axis || "GHz";
+    const unit = axisByKey(axisKey).unit;
     const rows = [];
     rows.push(["Level", completionModal.levelId]);
     rows.push(["Level name", completionModal.levelName]);
+    rows.push(["Line mode", completionModal.mode || "emission"]);
+    rows.push(["Spectral unit", unit]);
     rows.push(["Passed", completionModal.passed ? "yes" : "no"]);
     rows.push(["MSE", String(Number.isFinite(completionModal.mse) ? completionModal.mse.toFixed(6) : "")]);
     rows.push([
@@ -1185,37 +2273,41 @@ function App() {
     ]);
     rows.push(["Stars", String(completionModal.stars || 0)]);
     if (completionModal.sonification) {
+      rows.push(["Audio rule", completionModal.sonification.mode]);
       rows.push(["Audio scale factor", String(completionModal.sonification.scaleFactor)]);
     }
     rows.push([]);
     rows.push([
-      "True freq (GHz)",
-      "Molecule",
-      "Fitted freq (GHz)",
+      "True " + unit,
+      "Species",
+      "Scored",
+      "Fitted " + unit,
       "Error (%)",
-      "Amplitude",
-      "Center (GHz)",
-      "Sigma",
+      "Peak",
+      "Sigma (" + unit + ")",
+      "Optical depth",
       "Audible Hz",
     ]);
     const audible = (completionModal.sonification && completionModal.sonification.audibleHz) || [];
-    completionModal.lineErrors.forEach((le, idx) => {
-      const mol = le.line.knownLine
-        ? le.line.transition
-          ? le.line.label + " " + le.line.transition
-          : le.line.label || ""
-        : "Unknown line";
+    const lineRow = (le, audibleHz, scored) => {
       const fitted = le.matchedGaussian;
-      rows.push([
+      return [
         le.line.center.toFixed(6),
-        mol,
+        lineSpeciesLabel(le.line),
+        scored ? "yes" : "bonus",
         fitted ? fitted.center.toFixed(6) : "",
         le.percentError != null ? le.percentError.toFixed(4) : "",
         fitted ? fitted.amplitude.toFixed(4) : "",
-        fitted ? fitted.center.toFixed(6) : "",
         fitted ? fitted.sigma.toFixed(4) : "",
-        audible[idx] != null ? audible[idx].toFixed(2) : "",
-      ]);
+        fitted ? fitted.tau.toFixed(3) : "",
+        audibleHz != null ? audibleHz.toFixed(2) : "",
+      ];
+    };
+    completionModal.lineErrors.forEach((le, idx) => {
+      rows.push(lineRow(le, audible[idx], true));
+    });
+    (completionModal.bonusErrors || []).forEach((le) => {
+      rows.push(lineRow(le, null, false));
     });
     const csv = rows
       .map((r) =>
@@ -1278,6 +2370,9 @@ function App() {
   }
 
   const currentLevel = LEVELS[levelIndex];
+  const modalLevel = completionModal ? levelById(completionModal.levelId) : null;
+  const modalAxis = axisByKey(completionModal ? completionModal.axis : "GHz");
+  const modalBands = modalLevel ? starBandsForLevel(modalLevel) : null;
   const knownFacts =
     completionModal && completionModal.lineErrors
       ? completionModal.lineErrors
@@ -1304,25 +2399,34 @@ function App() {
           React.createElement(
             "div",
             { className: "level-select" },
-            LEVELS.map((lvl, idx) =>
+            TRACKS.map((track) =>
               React.createElement(
-                "button",
-                {
-                  key: lvl.id,
-                  type: "button",
-                  className:
-                    "level-button " +
-                    (idx === levelIndex ? "active" : "") +
-                    (passedLevels.has(lvl.id) ? " completed" : ""),
-                  onClick: () => {
-                    stopAllAudio();
-                    setCompletionModal(null);
-                    setLevelIndex(idx);
-                  },
-                },
-                "L",
-                lvl.id,
-                passedLevels.has(lvl.id) ? " ✓" : ""
+                "div",
+                { key: track.key, className: "level-group" },
+                React.createElement("span", { className: "level-group-label" }, track.label),
+                LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
+                  const idx = LEVELS.indexOf(lvl);
+                  return React.createElement(
+                    "button",
+                    {
+                      key: lvl.id,
+                      type: "button",
+                      title: lvl.name,
+                      className:
+                        "level-button " +
+                        (idx === levelIndex ? "active" : "") +
+                        (passedLevels.has(lvl.id) ? " completed" : ""),
+                      onClick: () => {
+                        stopAllAudio();
+                        setCompletionModal(null);
+                        setLevelIndex(idx);
+                      },
+                    },
+                    "L",
+                    lvl.id,
+                    passedLevels.has(lvl.id) ? " ✓" : ""
+                  );
+                })
               )
             )
           ),
@@ -1369,7 +2473,8 @@ function App() {
     ),
     screen === "attract" &&
       React.createElement(AttractScreen, {
-        onStart: handleStart,
+        onStart: () => handleStart(0),
+        onPlayLevel: (idx) => handleStart(idx),
         board: leaderboard,
         onResetLeaderboard: handleResetLeaderboard,
       }),
@@ -1430,16 +2535,23 @@ function App() {
             React.createElement(
               "span",
               null,
-              "Mean error ",
-              Number.isFinite(completionModal.meanErr) ? completionModal.meanErr.toFixed(2) : "—",
-              "% · MSE ",
-              Number.isFinite(completionModal.mse) ? completionModal.mse.toFixed(6) : "—"
+              "Mean center error ",
+              Number.isFinite(completionModal.meanErr)
+                ? completionModal.meanErr.toFixed(2)
+                : "—",
+              "% · Spectrum mismatch ",
+              Number.isFinite(completionModal.fitPct)
+                ? completionModal.fitPct.toFixed(1)
+                : "—",
+              "%"
             )
           ),
           React.createElement(
             "p",
             { className: "modal-hint" },
-            "Replay the level to try for a smaller error and more stars."
+            "Stars use the mean center error (not raw MSE), scaled to this level: 5★ needs ≤",
+            modalBands ? modalBands[0].toPrecision(2) : "0.05",
+            "% — keep refining for the leaderboard!"
           ),
           React.createElement(
             "div",
@@ -1480,18 +2592,19 @@ function App() {
                 React.createElement(
                   "thead",
                   null,
-                  React.createElement(
-                    "tr",
-                    null,
-                    React.createElement("th", null, "Freq (GHz)"),
-                    React.createElement("th", null, "Molecule"),
-                    React.createElement("th", null, "Fitted (GHz)"),
-                    React.createElement("th", null, "Audible Hz"),
-                    React.createElement("th", { className: "error-cell" }, "Error %"),
-                    React.createElement("th", null, "Amplitude"),
-                    React.createElement("th", null, "Sigma"),
-                    React.createElement("th", null, "Hear")
-                  )
+                React.createElement(
+                  "tr",
+                  null,
+                  React.createElement("th", null, "True (" + modalAxis.unit + ")"),
+                  React.createElement("th", null, modalAxis.key === "nm" ? "Element" : "Molecule"),
+                  React.createElement("th", null, "Fitted (" + modalAxis.unit + ")"),
+                  React.createElement("th", null, "Audible Hz"),
+                  React.createElement("th", { className: "error-cell" }, "Error %"),
+                  React.createElement("th", null, "Peak"),
+                  React.createElement("th", null, "Sigma"),
+                  React.createElement("th", null, "τ"),
+                  React.createElement("th", null, "Hear")
+                )
                 ),
                 React.createElement(
                   "tbody",
@@ -1504,7 +2617,11 @@ function App() {
                     return React.createElement(
                       "tr",
                       { key: idx },
-                      React.createElement("td", null, le.line.center.toFixed(4)),
+                      React.createElement(
+                        "td",
+                        null,
+                        formatAxisValue(le.line.center, modalAxis.key)
+                      ),
                       React.createElement(
                         "td",
                         null,
@@ -1517,7 +2634,9 @@ function App() {
                       React.createElement(
                         "td",
                         null,
-                        le.matchedGaussian ? le.matchedGaussian.center.toFixed(4) : "—"
+                        le.matchedGaussian
+                          ? formatAxisValue(le.matchedGaussian.center, modalAxis.key)
+                          : "—"
                       ),
                       React.createElement(
                         "td",
@@ -1527,7 +2646,7 @@ function App() {
                       React.createElement(
                         "td",
                         { className: "error-cell" },
-                        le.percentError != null ? le.percentError.toFixed(2) : "—"
+                        le.percentError != null ? le.percentError.toFixed(3) : "—"
                       ),
                       React.createElement(
                         "td",
@@ -1538,6 +2657,11 @@ function App() {
                         "td",
                         null,
                         le.matchedGaussian ? le.matchedGaussian.sigma.toFixed(3) : "—"
+                      ),
+                      React.createElement(
+                        "td",
+                        null,
+                        le.matchedGaussian ? le.matchedGaussian.tau.toFixed(2) : "—"
                       ),
                       React.createElement(
                         "td",
@@ -1554,9 +2678,15 @@ function App() {
                         )
                       )
                     );
-                  })
-                )
+                })
               )
+            )
+          ),
+          completionModal.extraLineCount > 0 &&
+            React.createElement(
+              "p",
+              { className: "modal-bonus" },
+              describeBonusLines(completionModal)
             ),
           completionModal.sonification &&
             React.createElement(
@@ -1580,12 +2710,18 @@ function App() {
               React.createElement(
                 "p",
                 { className: "sonify-scale" },
-                "Scaled down by ",
-                formatScaleFactor(completionModal.sonification.scaleFactor),
-                " so radio frequencies become audible tones (lowest line ≈ ",
-                AUDIBLE_BASE_HZ,
-                " Hz)."
+                describeSonifyRule(completionModal.sonification)
               ),
+              completionModal.sonification.mode === "ratio" &&
+                React.createElement(
+                  "p",
+                  { className: "sonify-scale" },
+                  "This window is wide enough that no exaggeration is needed: the whole spectrum lands between ",
+                  Math.round(completionModal.sonification.windowAudibleHz[0]),
+                  " and ",
+                  Math.round(completionModal.sonification.windowAudibleHz[1]),
+                  " Hz, and the intervals you hear are the real ones."
+                ),
               audioStatus &&
                 React.createElement("p", { className: "audio-status" }, audioStatus),
               React.createElement(
@@ -1595,7 +2731,9 @@ function App() {
                   className: "linkish-button",
                   onClick: () => setShowWhyScale((v) => !v),
                 },
-                showWhyScale ? "Hide: Why can’t I hear GHz?" : "Why can’t I hear GHz?"
+                showWhyScale
+                  ? "Hide: How do we turn these lines into sound?"
+                  : "How do we turn these lines into sound?"
               ),
               showWhyScale &&
                 React.createElement(
@@ -1604,12 +2742,24 @@ function App() {
                   React.createElement(
                     "p",
                     null,
-                    "These spectral lines are radio waves at tens to hundreds of gigahertz — vibrating far too fast for human ears (we hear roughly 20 Hz to 20 kHz)."
+                    "Spectral lines vibrate far too fast for human ears: radio lines sit at tens or hundreds of gigahertz, and visible light at hundreds of terahertz. We only hear roughly 20 Hz to 20,000 Hz."
                   ),
                   React.createElement(
                     "p",
                     null,
-                    "We multiply every fitted frequency by the same huge scale factor so the tones fall into the hearing range while keeping the relative spacing between lines. That way a chord of several lines still reflects how close those molecules’ frequencies are in the real spectrum."
+                    "When a spectrum covers a wide range — like the CO ladder from 461 to 922 GHz, or the whole rainbow from red to violet — we can simply divide every frequency by one big number. The notes then sit in the true ratios of the real lines, so a factor of two in frequency really is an octave."
+                  ),
+                  React.createElement(
+                    "p",
+                    null,
+                    "In a narrow window that trick fails: 88.6 GHz and 89.2 GHz divided by the same number would land about 1 Hz apart and sound identical. For those levels we stretch the gaps instead, roughly ",
+                    SONIFY_HZ_PER_GHZ,
+                    " Hz of pitch for every 1 GHz of separation, so you can still tell the lines apart."
+                  ),
+                  React.createElement(
+                    "p",
+                    null,
+                    "Either way this is a sonification for outreach, not a recording of the wave itself — so visitors can experience that different species sit at different frequencies."
                   )
                 )
             ),
@@ -1617,7 +2767,11 @@ function App() {
             React.createElement(
               "div",
               { className: "fact-cards" },
-              React.createElement("div", { className: "panel-title" }, "Molecule facts"),
+              React.createElement(
+                "div",
+                { className: "panel-title" },
+                modalAxis.key === "nm" ? "Element facts" : "Molecule facts"
+              ),
               knownFacts.map((f) =>
                 React.createElement(
                   "div",
@@ -1638,7 +2792,7 @@ function App() {
                   )
                 )
             ),
-          React.createElement(CdmsLearnMore),
+          React.createElement(CdmsLearnMore, { solar: modalAxis.key === "nm" }),
           React.createElement(
             "div",
             { className: "modal-actions" },
