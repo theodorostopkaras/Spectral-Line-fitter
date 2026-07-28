@@ -236,14 +236,20 @@ function continuumDefaults(level) {
 }
 
 function seedTelluricComponents(level) {
-  return telluricLinesOf(level.trueLines).map((line, i) => ({
-    id: 1000 + i,
-    amplitude: line.amplitude * 0.7,
-    center: line.center + (level.xMax - level.xMin) * 0.004 * (i % 2 === 0 ? 1 : -1),
-    sigma: line.sigma * 1.2,
-    tau: Math.max(TAU_MIN, line.tau * 0.6),
-    role: "telluric",
-  }));
+  const mid = (level.xMin + level.xMax) / 2;
+  const span = level.xMax - level.xMin;
+  const defs = componentDefaults(level);
+  return telluricLinesOf(level.trueLines).map((line, i) => {
+    const stagger = ((i % 5) - 2) * span * 0.02;
+    return {
+      id: 1000 + i,
+      amplitude: defs.amplitude,
+      center: Math.min(level.xMax, Math.max(level.xMin, mid + stagger)),
+      sigma: defs.sigma,
+      tau: defs.tau,
+      role: "telluric",
+    };
+  });
 }
 
 function meanSquaredError(yTrue, yPred) {
@@ -1777,24 +1783,24 @@ function SpectrumGameView(props) {
       }
       return false;
     };
-    const contOnly = evaluateContinuum(
-      spectrum.x,
-      lockedOrLiveContinuum,
-      level.xMin,
-      level.xMax
-    );
+    /** Observed/model minus locked continuum+tellurics — keeps absorption as dips below ~0. */
+    const residualFromBaseline = (ys) => ys.map((v, i) => v - baselineModelY[i]);
+    /** Line shape alone, relative to residual zero (no continuum). */
+    const residualComponentY = (xs, component) => {
+      const contribution = evaluateLineProfile(xs, component);
+      return absorb ? contribution.map((v) => -v) : contribution.slice();
+    };
+    const residualView = showResidual && baselineLocked;
     let observedY = spectrum.y;
     let observedLabel = absorb ? "Observed spectrum (absorption)" : "Observed spectrum";
-    if (showResidual && baselineLocked) {
-      observedY = spectrum.y.map((v, i) => {
-        const r = absorb ? contOnly[i] - v : v - contOnly[i];
-        return Math.max(0, r);
-      });
-      observedLabel = "Residual (continuum subtracted)";
+    if (residualView) {
+      observedY = residualFromBaseline(spectrum.y);
+      observedLabel = telluricTruth.length
+        ? "Residual (continuum & atmosphere subtracted)"
+        : "Residual (continuum subtracted)";
     }
-    // Split the observed trace so telluric (Earth-atmosphere) dips read amber in the
-    // main spectrum, not only as separate fit components.
-    const hasTellurics = telluricTruth.length > 0;
+    // Amber telluric overlay only on the raw spectrum; residual has those dips removed.
+    const hasTellurics = telluricTruth.length > 0 && !residualView;
     const scienceObs = hasTellurics
       ? spectrum.x.map((xi, i) => ({
           x: xi,
@@ -1829,18 +1835,13 @@ function SpectrumGameView(props) {
         phase === "baseline" && !baselineLocked ? "Baseline model" : "Model fit",
       data: toPoints(
         spectrum.x,
-        showResidual && baselineLocked
-          ? modelY.map((v, i) => {
-              const r = absorb ? contOnly[i] - v : v - contOnly[i];
-              return Math.max(0, r);
-            })
-          : modelY
+        residualView ? residualFromBaseline(modelY) : modelY
       ),
       borderColor: "rgba(52, 211, 153, 1)",
       borderWidth: 1.8,
       pointRadius: 0,
     });
-    if (needsBaseline && !(showResidual && baselineLocked)) {
+    if (needsBaseline && !residualView) {
       datasets.push({
         label: "Continuum",
         data: toPoints(coarseX, evaluateContinuum(coarseX, lockedOrLiveContinuum, level.xMin, level.xMax)),
@@ -1850,33 +1851,37 @@ function SpectrumGameView(props) {
         pointRadius: 0,
       });
     }
-    telluricComponents.forEach((component, idx) => {
-      datasets.push({
-        label: "Atmosphere fit " + (idx + 1),
-        data: toPoints(
-          coarseX,
-          componentCurve(coarseX, component, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax)
-        ),
-        borderColor: TELLURIC_COLOR,
-        borderWidth: component.id === selectedTelluricId ? 2.2 : 1.4,
-        borderDash: [6, 3],
-        pointRadius: 0,
+    if (!residualView) {
+      telluricComponents.forEach((component, idx) => {
+        datasets.push({
+          label: "Atmosphere fit " + (idx + 1),
+          data: toPoints(
+            coarseX,
+            componentCurve(coarseX, component, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax)
+          ),
+          borderColor: TELLURIC_COLOR,
+          borderWidth: component.id === selectedTelluricId ? 2.2 : 1.4,
+          borderDash: [6, 3],
+          pointRadius: 0,
+        });
       });
-    });
+    }
     if (phase === "lines" || baselineLocked || !needsBaseline) {
       components.forEach((component, idx) => {
         datasets.push({
           label: "Component " + (idx + 1),
           data: toPoints(
             coarseX,
-            componentCurve(
-              coarseX,
-              component,
-              lockedOrLiveContinuum,
-              level.mode,
-              level.xMin,
-              level.xMax
-            )
+            residualView
+              ? residualComponentY(coarseX, component)
+              : componentCurve(
+                  coarseX,
+                  component,
+                  lockedOrLiveContinuum,
+                  level.mode,
+                  level.xMin,
+                  level.xMax
+                )
           ),
           borderColor: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
           borderWidth: component.id === selectedId ? 2 : 1,
@@ -1954,7 +1959,9 @@ function SpectrumGameView(props) {
               title: {
                 display: true,
                 text: showResidual && baselineLocked
-                  ? "Residual intensity"
+                  ? absorb
+                    ? "Residual (absorption dips)"
+                    : "Residual intensity"
                   : absorb
                     ? "Intensity (against continuum)"
                     : "Intensity",
@@ -1996,48 +2003,19 @@ function SpectrumGameView(props) {
     []
   );
 
-  /**
-   * The strongest feature the current model does not explain yet, so each new component
-   * lands on the next real line instead of on empty sky or on top of the previous one.
-   */
-  function unexplainedFeature(current) {
-    const model = composeSpectrum(
-      spectrum.x,
-      telluricComponents.concat(current),
-      lockedOrLiveContinuum,
-      level.mode,
-      level.xMin,
-      level.xMax
-    );
-    let bestIdx = -1;
-    let bestGap = 0;
-    for (let i = 0; i < spectrum.x.length; i++) {
-      const gap = absorb ? model[i] - spectrum.y[i] : spectrum.y[i] - model[i];
-      if (gap > bestGap) {
-        bestGap = gap;
-        bestIdx = i;
-      }
-    }
-    if (bestIdx < 0 || bestGap < level.noiseLevel * 2) return null;
-    return {
-      center: spectrum.x[bestIdx],
-      amplitude: Math.min(ranges.amplitudeMax, Math.max(ranges.amplitudeMin, bestGap)),
-    };
-  }
-
   function handleAddComponent() {
     if (needsBaseline && !baselineLocked) return;
     setComponents((prev) => {
       if (prev.length >= maxComponents) return prev;
       const nextId = prev.length ? Math.max.apply(null, prev.map((c) => c.id)) + 1 : 1;
-      const feature = unexplainedFeature(prev);
-      const fraction = (prev.length + 1) / (prev.length + 2);
+      // Always spawn near mid-band — never on residual peaks (that was giving away line centres).
+      const mid = (level.xMin + level.xMax) / 2;
+      const span = level.xMax - level.xMin;
+      const stagger = ((prev.length % 5) - 2) * span * 0.015;
       const next = {
         id: nextId,
-        amplitude: feature ? feature.amplitude : defaults.amplitude,
-        center: feature
-          ? feature.center
-          : level.xMin + fraction * (level.xMax - level.xMin),
+        amplitude: defaults.amplitude,
+        center: Math.min(level.xMax, Math.max(level.xMin, mid + stagger)),
         sigma: defaults.sigma,
         tau: defaults.tau,
         role: "science",
@@ -2277,8 +2255,12 @@ function SpectrumGameView(props) {
             (telluricComponents.length ? " (Earth's air, not the Sun)" : "") +
             ", then Lock baseline. Science lines stay locked until then."
           : telluricTruth.length
-            ? "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected component."
-            : "Click the plot to move the selected component there. Every drawn science line can be fitted — weak ones may not decide the pass."
+            ? showResidual
+              ? "Residual: continuum and amber atmosphere removed — solar lines stay as absorption dips around zero. Click the plot to place the selected component."
+              : "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected component."
+            : showResidual
+              ? "Residual: continuum subtracted — emission stays above zero, absorption stays as dips. Click the plot to place the selected component."
+              : "Click the plot to move the selected component there. Every drawn science line can be fitted — weak ones may not decide the pass."
       ),
       completed &&
         React.createElement(
