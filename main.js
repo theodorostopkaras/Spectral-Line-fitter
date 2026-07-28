@@ -4,9 +4,10 @@
 
 /**
  * @typedef {{ amplitude: number; center: number; sigma: number; tau: number }} LineParams
- * @typedef {{ amplitude: number; center: number; sigma: number; tau: number; knownLine: boolean; graded?: boolean; label?: string; transition?: string }} TrueLine
- * @typedef {{ id: number; amplitude: number; center: number; sigma: number; tau: number }} PlayerComponent
- * @typedef {{ id: number; name: string; track: string; mode: "emission" | "absorption"; axis: "GHz" | "nm"; sonify: "stretch" | "ratio"; xMin: number; xMax: number; noiseLevel: number; baseline: number; trueLines: TrueLine[]; maxGaussians?: number; errorThresholdPercent: number; starBands?: number[]; allowLogY?: boolean; showSpectrumColors?: boolean; blurb?: string }} LevelConfig
+ * @typedef {{ amplitude: number; center: number; sigma: number; tau: number; knownLine: boolean; graded?: boolean; role?: "science" | "telluric"; label?: string; transition?: string }} TrueLine
+ * @typedef {{ id: number; amplitude: number; center: number; sigma: number; tau: number; role?: "science" | "telluric" }} PlayerComponent
+ * @typedef {{ type: "flat"; c0: number } | { type: "poly"; c0: number; c1: number; c2?: number } | { type: "wideGaussian"; amplitude: number; center: number; sigma: number; floor?: number }} ContinuumSpec
+ * @typedef {{ id: number; name: string; track: string; mode: "emission" | "absorption"; axis: "GHz" | "nm"; sonify: "stretch" | "ratio"; xMin: number; xMax: number; noiseLevel: number; baseline: number; continuum?: ContinuumSpec; continuumLockPercent?: number; trueLines: TrueLine[]; maxGaussians?: number; errorThresholdPercent: number; starBands?: number[]; allowLogY?: boolean; showSpectrumColors?: boolean; blurb?: string }} LevelConfig
  */
 
 const CDMS_URL = "https://cdms.astro.uni-koeln.de/classic/";
@@ -30,6 +31,10 @@ const TAU_MAX = 30;
 const LOG_Y_FLOOR = 0.01;
 const LEADERBOARD_TOP_N = 5;
 const MAX_NAME_LEN = 20;
+/** Amber stroke for telluric (Earth-atmosphere) components on solar levels. */
+const TELLURIC_COLOR = "rgba(251, 146, 60, 0.95)";
+/** Default RMSE % of intensity range required to lock the baseline phase. */
+const DEFAULT_CONTINUUM_LOCK_PERCENT = 12;
 
 const AXES = {
   GHz: {
@@ -91,10 +96,67 @@ function evaluateLineProfile(x, p) {
   return x.map((xi) => imax * (1 - Math.exp(-tau * gaussianShape(xi, center, sigma))));
 }
 
+/** Continuum shape for a level (shaped poly / wide Gaussian, or a flat baseline). */
+function continuumSpec(level) {
+  if (level && level.continuum) return level.continuum;
+  return { type: "flat", c0: (level && level.baseline) || 0 };
+}
+
+/**
+ * Evaluate the continuum along x. Polynomials use a normalised coordinate t in [-1, 1]
+ * across the level window, so c1 and c2 stay O(1) and readable on the sliders.
+ */
+function evaluateContinuum(x, continuum, xMin, xMax) {
+  const spec = continuum || { type: "flat", c0: 0 };
+  if (spec.type === "wideGaussian") {
+    const floor = spec.floor || 0;
+    return x.map(
+      (xi) => floor + spec.amplitude * gaussianShape(xi, spec.center, spec.sigma)
+    );
+  }
+  if (spec.type === "poly") {
+    const mid = (xMin + xMax) / 2;
+    const half = (xMax - xMin) / 2 || 1;
+    const c0 = spec.c0 || 0;
+    const c1 = spec.c1 || 0;
+    const c2 = spec.c2 || 0;
+    return x.map((xi) => {
+      const t = (xi - mid) / half;
+      return c0 + c1 * t + c2 * t * t;
+    });
+  }
+  const c0 = spec.c0 != null ? spec.c0 : 0;
+  return x.map(() => c0);
+}
+
+function isTelluricLine(line) {
+  return !!(line && line.role === "telluric");
+}
+
+function scienceLinesOf(lines) {
+  return (lines || []).filter((l) => !isTelluricLine(l));
+}
+
+function telluricLinesOf(lines) {
+  return (lines || []).filter(isTelluricLine);
+}
+
+/** Levels with a shaped continuum and/or tellurics use the two-step baseline flow. */
+function levelNeedsBaselinePhase(level) {
+  if (!level) return false;
+  const c = continuumSpec(level);
+  if (c.type !== "flat") return true;
+  return telluricLinesOf(level.trueLines).length > 0;
+}
+
 /** Continuum plus (emission) or minus (absorption) every line contribution. */
-function composeSpectrum(x, lines, baseline, mode) {
+function composeSpectrum(x, lines, continuum, mode, xMin, xMax) {
   const absorb = isAbsorption(mode);
-  const y = new Array(x.length).fill(baseline);
+  const xmin = xMin != null ? xMin : x[0];
+  const xmax = xMax != null ? xMax : x[x.length - 1];
+  const contSpec =
+    typeof continuum === "number" ? { type: "flat", c0: continuum } : continuum;
+  const y = evaluateContinuum(x, contSpec, xmin, xmax);
   for (const line of lines) {
     const contribution = evaluateLineProfile(x, line);
     for (let i = 0; i < y.length; i++) y[i] += absorb ? -contribution[i] : contribution[i];
@@ -106,11 +168,82 @@ function composeSpectrum(x, lines, baseline, mode) {
 }
 
 /** One component drawn against the continuum, so absorption components dip downwards. */
-function componentCurve(x, component, baseline, mode) {
+function componentCurve(x, component, continuum, mode, xMin, xMax) {
+  const contSpec =
+    typeof continuum === "number" ? { type: "flat", c0: continuum } : continuum;
+  const cont = evaluateContinuum(x, contSpec, xMin, xMax);
   const contribution = evaluateLineProfile(x, component);
   return isAbsorption(mode)
-    ? contribution.map((v) => Math.max(0, baseline - v))
-    : contribution.map((v) => baseline + v);
+    ? contribution.map((v, i) => Math.max(0, cont[i] - v))
+    : contribution.map((v, i) => cont[i] + v);
+}
+
+/**
+ * RMSE of the baseline model (continuum + tellurics) vs the data, ignoring neighbourhoods
+ * around science lines so strong peaks do not block locking.
+ */
+function baselineResidualPercent(spectrum, continuum, telluricComponents, scienceLines, mode, xMin, xMax) {
+  const model = composeSpectrum(
+    spectrum.x,
+    telluricComponents || [],
+    continuum,
+    mode,
+    xMin,
+    xMax
+  );
+  let ymin = Infinity;
+  let ymax = -Infinity;
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < spectrum.x.length; i++) {
+    const xi = spectrum.x[i];
+    let nearScience = false;
+    for (const line of scienceLines || []) {
+      if (Math.abs(xi - line.center) < line.sigma * 3.5) {
+        nearScience = true;
+        break;
+      }
+    }
+    if (nearScience) continue;
+    const v = spectrum.y[i];
+    if (v < ymin) ymin = v;
+    if (v > ymax) ymax = v;
+    const d = v - model[i];
+    sum += d * d;
+    n++;
+  }
+  if (n < 8) return NaN;
+  const range = ymax - ymin;
+  if (!(range > 0)) return NaN;
+  return (Math.sqrt(sum / n) / range) * 100;
+}
+
+function continuumDefaults(level) {
+  const c = continuumSpec(level);
+  if (c.type === "poly") {
+    return { type: "poly", c0: c.c0 * 0.9, c1: 0, c2: 0 };
+  }
+  if (c.type === "wideGaussian") {
+    return {
+      type: "wideGaussian",
+      amplitude: c.amplitude * 0.75,
+      center: (level.xMin + level.xMax) / 2,
+      sigma: c.sigma * 1.4,
+      floor: c.floor || 0,
+    };
+  }
+  return { type: "flat", c0: c.c0 };
+}
+
+function seedTelluricComponents(level) {
+  return telluricLinesOf(level.trueLines).map((line, i) => ({
+    id: 1000 + i,
+    amplitude: line.amplitude * 0.7,
+    center: line.center + (level.xMax - level.xMin) * 0.004 * (i % 2 === 0 ? 1 : -1),
+    sigma: line.sigma * 1.2,
+    tau: Math.max(TAU_MIN, line.tau * 0.6),
+    role: "telluric",
+  }));
 }
 
 function meanSquaredError(yTrue, yPred) {
@@ -169,7 +302,14 @@ function spectrumPointCount(level) {
 
 function generateSpectrum(level) {
   const x = linspace(level.xMin, level.xMax, spectrumPointCount(level));
-  let y = composeSpectrum(x, level.trueLines, level.baseline, level.mode);
+  let y = composeSpectrum(
+    x,
+    level.trueLines,
+    continuumSpec(level),
+    level.mode,
+    level.xMin,
+    level.xMax
+  );
   if (level.noiseLevel > 0) {
     const absorb = isAbsorption(level.mode);
     y = y.map((v) => {
@@ -568,6 +708,7 @@ const CDMS_CATALOG = [
   { value: 531.716350, species: "HCN", transition: "J=6-5" },
   { value: 535.061600, species: "HCO+", transition: "J=6-5" },
   { value: 538.688830, species: "CS", transition: "J=11-10" },
+  { value: 548.831005, species: "C18O", transition: "J=5-4" },
   { value: 550.926300, species: "13CO", transition: "J=5-4" },
   { value: 556.936002, species: "H2O", transition: "1(1,0)-1(0,1)" },
   { value: 572.498068, species: "NH3", transition: "1(0)-0(0)" },
@@ -890,40 +1031,27 @@ const LEVELS = [
   },
   {
     id: 8,
-    name: "Level 8 – CO ladder scan",
+    name: "Level 8 – HEXOS Band 1a",
     track: "radio",
     mode: "emission",
     axis: "GHz",
     sonify: "ratio",
     blurb:
-      "A HEXOS-style scan spanning almost exactly one octave: CO J=4-3 up to J=8-7 is a 4:5:6:7:8 harmonic series, so the fitted lines play as a chord. Score the five CO rungs plus water and atomic carbon.",
-    xMin: 450,
-    xMax: 930,
-    noiseLevel: 0.04,
-    baseline: 0.1,
-    errorThresholdPercent: 0.3,
+      "A small cut of Herschel/HIFI Band 1a toward Orion KL — the HEXOS survey. Real spectra here have thousands of lines; this vignette keeps seven strong ones, and every line on the plot counts toward your score. Use the log button to stretch the weaker features.",
+    xMin: 480,
+    xMax: 560,
+    noiseLevel: 0.05,
+    baseline: 0.45,
+    errorThresholdPercent: 0.25,
     allowLogY: true,
     trueLines: [
-      { amplitude: 3.0, center: 461.040768, sigma: 1.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=4-3" },
-      { amplitude: 1.2, center: 492.160651, sigma: 1.4, tau: 0.8, knownLine: true, label: "CI", transition: "3P1-3P0" },
-      { amplitude: 0.25, center: 505.3, sigma: 1.1, tau: 0.2, knownLine: false, graded: false },
-      { amplitude: 0.7, center: 531.716350, sigma: 1.3, tau: 0.5, knownLine: true, graded: false, label: "HCN", transition: "J=6-5" },
-      { amplitude: 0.6, center: 535.061600, sigma: 1.3, tau: 0.5, knownLine: true, graded: false, label: "HCO+", transition: "J=6-5" },
-      { amplitude: 0.35, center: 538.688830, sigma: 1.2, tau: 0.3, knownLine: true, graded: false, label: "CS", transition: "J=11-10" },
-      { amplitude: 0.8, center: 550.926300, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "13CO", transition: "J=5-4" },
-      { amplitude: 2.2, center: 556.936002, sigma: 1.8, tau: 2.0, knownLine: true, label: "H2O", transition: "1(1,0)-1(0,1)" },
-      { amplitude: 0.5, center: 572.498068, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "NH3", transition: "1(0)-0(0)" },
-      { amplitude: 3.4, center: 576.267931, sigma: 1.6, tau: 3.5, knownLine: true, label: "CO", transition: "J=5-4" },
-      { amplitude: 0.3, center: 587.616000, sigma: 1.2, tau: 0.3, knownLine: true, graded: false, label: "CS", transition: "J=12-11" },
-      { amplitude: 0.2, center: 617.0, sigma: 1.1, tau: 0.2, knownLine: false, graded: false },
-      { amplitude: 0.55, center: 620.304095, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "HCN", transition: "J=7-6" },
-      { amplitude: 0.5, center: 624.208000, sigma: 1.3, tau: 0.4, knownLine: true, graded: false, label: "HCO+", transition: "J=7-6" },
-      { amplitude: 3.2, center: 691.473076, sigma: 1.7, tau: 3.0, knownLine: true, label: "CO", transition: "J=6-5" },
-      { amplitude: 0.3, center: 738.4, sigma: 1.2, tau: 0.2, knownLine: false, graded: false },
-      { amplitude: 2.6, center: 806.651806, sigma: 1.3, tau: 2.5, knownLine: true, label: "CO", transition: "J=7-6" },
-      { amplitude: 0.75, center: 809.343500, sigma: 1.1, tau: 1.0, knownLine: true, graded: false, label: "CI", transition: "3P2-3P1" },
-      { amplitude: 0.22, center: 864.9, sigma: 1.2, tau: 0.2, knownLine: false, graded: false },
-      { amplitude: 2.0, center: 921.799700, sigma: 1.6, tau: 2.0, knownLine: true, label: "CO", transition: "J=8-7" },
+      { amplitude: 1.8, center: 492.160651, sigma: 0.55, tau: 1.2, knownLine: true, label: "CI", transition: "3P1-3P0" },
+      { amplitude: 1.1, center: 531.716350, sigma: 0.45, tau: 0.8, knownLine: true, label: "HCN", transition: "J=6-5" },
+      { amplitude: 1.3, center: 535.061600, sigma: 0.42, tau: 1.0, knownLine: true, label: "HCO+", transition: "J=6-5" },
+      { amplitude: 0.7, center: 538.688830, sigma: 0.4, tau: 0.5, knownLine: true, label: "CS", transition: "J=11-10" },
+      { amplitude: 1.0, center: 548.831005, sigma: 0.38, tau: 0.6, knownLine: true, label: "C18O", transition: "J=5-4" },
+      { amplitude: 2.2, center: 550.926300, sigma: 0.4, tau: 1.5, knownLine: true, label: "13CO", transition: "J=5-4" },
+      { amplitude: 3.2, center: 556.936002, sigma: 0.55, tau: 2.5, knownLine: true, label: "H2O", transition: "1(1,0)-1(0,1)" },
     ],
   },
   {
@@ -958,11 +1086,13 @@ const LEVELS = [
     axis: "nm",
     sonify: "ratio",
     blurb:
-      "Fraunhofer's own spectrum: dark absorption lines across the whole visible range, at the resolution of a school spectroscope. Two of the scored features look like single lines here but split apart in Levels 11 and 12, and two of the weak lines are made by our own atmosphere, not the Sun.",
+      "Fraunhofer's own spectrum on a gently sloping continuum. First lock the continuum and the amber atmospheric O₂ lines (telluric — made by Earth's air, not the Sun), then fit the solar lines. Two blended features split apart in Levels 11 and 12.",
     xMin: 380,
     xMax: 700,
     noiseLevel: 0.012,
     baseline: 1.0,
+    continuum: { type: "poly", c0: 1.02, c1: -0.12, c2: -0.06 },
+    continuumLockPercent: 14,
     errorThresholdPercent: 0.25,
     showSpectrumColors: true,
     trueLines: [
@@ -978,9 +1108,9 @@ const LEVELS = [
       { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, graded: false, label: "Fe I", transition: "E2" },
       { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, graded: false, label: "He I", transition: "D3" },
       { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D doublet (blend)" },
-      { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, graded: false, label: "O2", transition: "a (telluric)" },
+      { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, role: "telluric", label: "O2", transition: "a (telluric)" },
       { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "C (H-alpha)" },
-      { amplitude: 0.28, center: 686.719, sigma: 0.7, tau: 1.5, knownLine: true, graded: false, label: "O2", transition: "B (telluric)" },
+      { amplitude: 0.28, center: 686.719, sigma: 0.7, tau: 1.5, knownLine: true, role: "telluric", label: "O2", transition: "B (telluric)" },
     ],
   },
   {
@@ -1026,6 +1156,33 @@ const LEVELS = [
       { amplitude: 0.7, center: 589.592, sigma: 0.065, tau: 5, knownLine: true, label: "Na I", transition: "D1" },
     ],
   },
+  {
+    id: 13,
+    name: "Level 13 – Continuum first",
+    track: "radio",
+    mode: "emission",
+    axis: "GHz",
+    sonify: "ratio",
+    blurb:
+      "A rising dust continuum under a handful of 3 mm lines — like a cut of a HEXOS-style scan. Lock the continuum first (Phase 1), then fit the molecular lines on what remains. The residual view helps once the baseline is locked.",
+    xMin: 88,
+    xMax: 116,
+    noiseLevel: 0.05,
+    baseline: 0.6,
+    continuum: { type: "poly", c0: 0.85, c1: 0.5, c2: 0.15 },
+    continuumLockPercent: 11,
+    errorThresholdPercent: 0.25,
+    allowLogY: true,
+    trueLines: [
+      { amplitude: 2.4, center: 88.631847, sigma: 0.14, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 2.0, center: 89.188523, sigma: 0.13, tau: 1.4, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 1.1, center: 93.173764, sigma: 0.14, tau: 0.7, knownLine: true, label: "N2H+", transition: "J=1-0" },
+      { amplitude: 1.4, center: 97.980953, sigma: 0.14, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
+      { amplitude: 0.9, center: 109.782173, sigma: 0.12, tau: 0.5, knownLine: true, label: "C18O", transition: "J=1-0" },
+      { amplitude: 2.2, center: 110.201354, sigma: 0.13, tau: 1.3, knownLine: true, label: "13CO", transition: "J=1-0" },
+      { amplitude: 3.6, center: 115.271202, sigma: 0.16, tau: 4.0, knownLine: true, label: "CO", transition: "J=1-0" },
+    ],
+  },
 ];
 
 function levelById(id) {
@@ -1033,19 +1190,20 @@ function levelById(id) {
 }
 
 /**
- * Every line that is drawn can be fitted, weak forest included, plus two spare
- * components to experiment with. Levels may still set maxGaussians explicitly.
+ * Every science line that is drawn can be fitted, plus two spare components.
+ * Tellurics are handled in the baseline phase and do not consume this budget.
  */
 function maxComponentsForLevel(level) {
   if (level && Number.isFinite(level.maxGaussians)) return level.maxGaussians;
-  const lines = (level && level.trueLines && level.trueLines.length) || 1;
+  const lines = scienceLinesOf(level && level.trueLines).length || 1;
   return lines + 2;
 }
 
 /** Slider ranges follow the level, so a 0.1-deep Fraunhofer line and a 4 K CO peak both work. */
 function sliderRanges(level) {
-  const amplitudes = level.trueLines.map((l) => l.amplitude);
-  const sigmas = level.trueLines.map((l) => l.sigma);
+  const lines = scienceLinesOf(level.trueLines);
+  const amplitudes = (lines.length ? lines : level.trueLines).map((l) => l.amplitude);
+  const sigmas = (lines.length ? lines : level.trueLines).map((l) => l.sigma);
   const range = level.xMax - level.xMin;
   const amplitudeMax = Math.max.apply(null, amplitudes) * 1.3;
   const sigmaMin = Math.max(0.005, Math.min.apply(null, sigmas) / 4);
@@ -1064,8 +1222,9 @@ function sliderRanges(level) {
 
 /** Neutral starting values for a new component: never the answer, just a sensible guess. */
 function componentDefaults(level) {
-  const amplitudes = level.trueLines.map((l) => l.amplitude).sort((a, b) => a - b);
-  const sigmas = level.trueLines.map((l) => l.sigma).sort((a, b) => a - b);
+  const lines = scienceLinesOf(level.trueLines);
+  const amplitudes = lines.map((l) => l.amplitude).sort((a, b) => a - b);
+  const sigmas = lines.map((l) => l.sigma).sort((a, b) => a - b);
   const mid = (arr) => arr[Math.floor(arr.length / 2)];
   return {
     amplitude: mid(amplitudes) || 1,
@@ -1269,7 +1428,7 @@ function LeaderboardPanel(props) {
   );
 }
 
-/** "Level 8 – CO ladder scan" → "CO ladder scan". */
+/** "Level 8 – HEXOS Band 1a" → "HEXOS Band 1a". */
 function levelShortName(level) {
   const dash = level.name.indexOf("–");
   return dash >= 0 ? level.name.slice(dash + 1).trim() : level.name;
@@ -1385,6 +1544,11 @@ function AttractScreen(props) {
         React.createElement(
           "li",
           null,
+          "On continuum levels: first fit and lock the baseline (and amber atmospheric lines on the solar spectrum), then fit the science lines."
+        ),
+        React.createElement(
+          "li",
+          null,
           "Tune peak, position, width and optical depth until the green model matches the blue data."
         ),
         React.createElement(
@@ -1467,19 +1631,44 @@ function SpectrumGameView(props) {
   const { level, onCompletion } = props;
   const axis = axisOf(level);
   const absorb = isAbsorption(level.mode);
+  const needsBaseline = levelNeedsBaselinePhase(level);
+  const trueContinuum = continuumSpec(level);
+  const scienceTruth = React.useMemo(
+    () => scienceLinesOf(level.trueLines),
+    [level.trueLines]
+  );
+  const telluricTruth = React.useMemo(
+    () => telluricLinesOf(level.trueLines),
+    [level.trueLines]
+  );
   const ranges = React.useMemo(() => sliderRanges(level), [level]);
   const defaults = React.useMemo(() => componentDefaults(level), [level]);
   const [spectrum] = React.useState(() => generateSpectrum(level));
-  const [components, setComponents] = React.useState(() => [
-    {
-      id: 1,
-      amplitude: defaults.amplitude,
-      center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-      sigma: defaults.sigma,
-      tau: defaults.tau,
-    },
-  ]);
-  const [selectedId, setSelectedId] = React.useState(1);
+  const [continuumFit, setContinuumFit] = React.useState(() => continuumDefaults(level));
+  const [telluricComponents, setTelluricComponents] = React.useState(() =>
+    seedTelluricComponents(level)
+  );
+  const [components, setComponents] = React.useState(() =>
+    needsBaseline
+      ? []
+      : [
+          {
+            id: 1,
+            amplitude: defaults.amplitude,
+            center: spectrum.x[Math.floor(spectrum.x.length / 2)],
+            sigma: defaults.sigma,
+            tau: defaults.tau,
+            role: "science",
+          },
+        ]
+  );
+  const [selectedId, setSelectedId] = React.useState(needsBaseline ? null : 1);
+  const [selectedTelluricId, setSelectedTelluricId] = React.useState(
+    () => (telluricComponents[0] && telluricComponents[0].id) || null
+  );
+  const [phase, setPhase] = React.useState(needsBaseline ? "baseline" : "lines");
+  const [baselineLocked, setBaselineLocked] = React.useState(!needsBaseline);
+  const [showResidual, setShowResidual] = React.useState(false);
   const [logY, setLogY] = React.useState(false);
   const [chartCanvas, setChartCanvas] = React.useState(null);
   const chartRef = React.useRef(null);
@@ -1490,17 +1679,89 @@ function SpectrumGameView(props) {
   const [completed, setCompleted] = React.useState(false);
   const [completionSummary, setCompletionSummary] = React.useState(null);
 
-  const gradedLines = React.useMemo(
-    () => spectrum.trueLines.filter(isGradedLine),
-    [spectrum.trueLines]
+  const gradedScience = React.useMemo(
+    () => scienceTruth.filter(isGradedLine),
+    [scienceTruth]
+  );
+  const gradedTellurics = React.useMemo(
+    () => telluricTruth.filter(isGradedLine),
+    [telluricTruth]
   );
   const coarseX = React.useMemo(() => linspace(level.xMin, level.xMax, 500), [level]);
   const maxComponents = maxComponentsForLevel(level);
+  const lockThreshold =
+    level.continuumLockPercent != null
+      ? level.continuumLockPercent
+      : DEFAULT_CONTINUUM_LOCK_PERCENT;
 
-  const modelY = React.useMemo(
-    () => composeSpectrum(spectrum.x, components, level.baseline, level.mode),
-    [components, spectrum.x, level.baseline, level.mode]
+  const lockedOrLiveContinuum = continuumFit;
+
+  const baselineModelY = React.useMemo(
+    () =>
+      composeSpectrum(
+        spectrum.x,
+        telluricComponents,
+        lockedOrLiveContinuum,
+        level.mode,
+        level.xMin,
+        level.xMax
+      ),
+    [spectrum.x, telluricComponents, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax]
   );
+
+  const modelY = React.useMemo(() => {
+    if (needsBaseline && phase === "baseline" && !baselineLocked) {
+      return baselineModelY;
+    }
+    return composeSpectrum(
+      spectrum.x,
+      telluricComponents.concat(components),
+      lockedOrLiveContinuum,
+      level.mode,
+      level.xMin,
+      level.xMax
+    );
+  }, [
+    needsBaseline,
+    phase,
+    baselineLocked,
+    baselineModelY,
+    spectrum.x,
+    telluricComponents,
+    components,
+    lockedOrLiveContinuum,
+    level.mode,
+    level.xMin,
+    level.xMax,
+  ]);
+
+  const baselineFitPct = React.useMemo(
+    () =>
+      baselineResidualPercent(
+        spectrum,
+        lockedOrLiveContinuum,
+        telluricComponents,
+        scienceTruth,
+        level.mode,
+        level.xMin,
+        level.xMax
+      ),
+    [
+      spectrum,
+      lockedOrLiveContinuum,
+      telluricComponents,
+      scienceTruth,
+      level.mode,
+      level.xMin,
+      level.xMax,
+    ]
+  );
+
+  const canLockBaseline =
+    needsBaseline &&
+    !baselineLocked &&
+    isFinite(baselineFitPct) &&
+    baselineFitPct <= lockThreshold;
 
   React.useEffect(() => {
     setMse(meanSquaredError(spectrum.y, modelY));
@@ -1510,30 +1771,121 @@ function SpectrumGameView(props) {
   function buildDatasets() {
     const clip = (v) => (logY ? Math.max(LOG_Y_FLOOR, v) : v);
     const toPoints = (xs, ys) => xs.map((xi, i) => ({ x: xi, y: clip(ys[i]) }));
-    const componentSets = components.map((component, idx) => ({
-      label: "Component " + (idx + 1),
-      data: toPoints(coarseX, componentCurve(coarseX, component, level.baseline, level.mode)),
-      borderColor: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
-      borderWidth: component.id === selectedId ? 2 : 1,
-      borderDash: [4, 3],
-      pointRadius: 0,
-    }));
-    return [
+    const nearAtmosphere = (xi) => {
+      for (const line of telluricTruth) {
+        if (Math.abs(xi - line.center) <= line.sigma * 4) return true;
+      }
+      return false;
+    };
+    const contOnly = evaluateContinuum(
+      spectrum.x,
+      lockedOrLiveContinuum,
+      level.xMin,
+      level.xMax
+    );
+    let observedY = spectrum.y;
+    let observedLabel = absorb ? "Observed spectrum (absorption)" : "Observed spectrum";
+    if (showResidual && baselineLocked) {
+      observedY = spectrum.y.map((v, i) => {
+        const r = absorb ? contOnly[i] - v : v - contOnly[i];
+        return Math.max(0, r);
+      });
+      observedLabel = "Residual (continuum subtracted)";
+    }
+    // Split the observed trace so telluric (Earth-atmosphere) dips read amber in the
+    // main spectrum, not only as separate fit components.
+    const hasTellurics = telluricTruth.length > 0;
+    const scienceObs = hasTellurics
+      ? spectrum.x.map((xi, i) => ({
+          x: xi,
+          y: nearAtmosphere(xi) ? NaN : clip(observedY[i]),
+        }))
+      : toPoints(spectrum.x, observedY);
+    const datasets = [
       {
-        label: absorb ? "Observed spectrum (absorption)" : "Observed spectrum",
-        data: toPoints(spectrum.x, spectrum.y),
+        label: hasTellurics ? observedLabel + " (solar)" : observedLabel,
+        data: scienceObs,
         borderColor: "rgba(96, 165, 250, 1)",
         borderWidth: 1.5,
         pointRadius: 0,
+        spanGaps: false,
       },
-      {
-        label: "Model fit",
-        data: toPoints(spectrum.x, modelY),
-        borderColor: "rgba(52, 211, 153, 1)",
-        borderWidth: 1.8,
+    ];
+    if (hasTellurics) {
+      datasets.push({
+        label: "Atmosphere in data (telluric)",
+        data: spectrum.x.map((xi, i) => ({
+          x: xi,
+          y: nearAtmosphere(xi) ? clip(observedY[i]) : NaN,
+        })),
+        borderColor: TELLURIC_COLOR,
+        borderWidth: 2.4,
         pointRadius: 0,
-      },
-    ].concat(componentSets);
+        spanGaps: false,
+      });
+    }
+    datasets.push({
+      label:
+        phase === "baseline" && !baselineLocked ? "Baseline model" : "Model fit",
+      data: toPoints(
+        spectrum.x,
+        showResidual && baselineLocked
+          ? modelY.map((v, i) => {
+              const r = absorb ? contOnly[i] - v : v - contOnly[i];
+              return Math.max(0, r);
+            })
+          : modelY
+      ),
+      borderColor: "rgba(52, 211, 153, 1)",
+      borderWidth: 1.8,
+      pointRadius: 0,
+    });
+    if (needsBaseline && !(showResidual && baselineLocked)) {
+      datasets.push({
+        label: "Continuum",
+        data: toPoints(coarseX, evaluateContinuum(coarseX, lockedOrLiveContinuum, level.xMin, level.xMax)),
+        borderColor: "rgba(148, 163, 184, 0.85)",
+        borderWidth: 1.2,
+        borderDash: [2, 4],
+        pointRadius: 0,
+      });
+    }
+    telluricComponents.forEach((component, idx) => {
+      datasets.push({
+        label: "Atmosphere fit " + (idx + 1),
+        data: toPoints(
+          coarseX,
+          componentCurve(coarseX, component, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax)
+        ),
+        borderColor: TELLURIC_COLOR,
+        borderWidth: component.id === selectedTelluricId ? 2.2 : 1.4,
+        borderDash: [6, 3],
+        pointRadius: 0,
+      });
+    });
+    if (phase === "lines" || baselineLocked || !needsBaseline) {
+      components.forEach((component, idx) => {
+        datasets.push({
+          label: "Component " + (idx + 1),
+          data: toPoints(
+            coarseX,
+            componentCurve(
+              coarseX,
+              component,
+              lockedOrLiveContinuum,
+              level.mode,
+              level.xMin,
+              level.xMax
+            )
+          ),
+          borderColor: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
+          borderWidth: component.id === selectedId ? 2 : 1,
+          borderDash: [4, 3],
+          pointRadius: 0,
+        });
+      });
+    }
+    return datasets;
   }
 
   React.useEffect(() => {
@@ -1543,13 +1895,28 @@ function SpectrumGameView(props) {
       const value = chart.scales.x.getValueForPixel(evt.x);
       if (value == null || !isFinite(value)) return;
       const clamped = Math.min(level.xMax, Math.max(level.xMin, value));
-      handleUpdateComponent(selectedId, "center", clamped);
+      if (phase === "baseline" && !baselineLocked && selectedTelluricId != null) {
+        setTelluricComponents((prev) =>
+          prev.map((c) => (c.id === selectedTelluricId ? { ...c, center: clamped } : c))
+        );
+        return;
+      }
+      if ((phase === "lines" || !needsBaseline) && selectedId != null) {
+        handleUpdateComponent(selectedId, "center", clamped);
+      }
     };
   });
 
   React.useEffect(() => {
     if (!chartCanvas || typeof Chart !== "function") return;
-    const signature = level.id + "|" + (logY ? "log" : "lin");
+    const signature =
+      level.id +
+      "|" +
+      (logY ? "log" : "lin") +
+      "|" +
+      (showResidual ? "res" : "raw") +
+      "|" +
+      phase;
     if (chartRef.current && chartSignatureRef.current !== signature) {
       chartRef.current.destroy();
       chartRef.current = null;
@@ -1586,7 +1953,11 @@ function SpectrumGameView(props) {
               ticks: { color: "#a5b4fc" },
               title: {
                 display: true,
-                text: absorb ? "Intensity (continuum = " + level.baseline + ")" : "Intensity",
+                text: showResidual && baselineLocked
+                  ? "Residual intensity"
+                  : absorb
+                    ? "Intensity (against continuum)"
+                    : "Intensity",
                 color: "#e5e5ff",
               },
             },
@@ -1599,7 +1970,21 @@ function SpectrumGameView(props) {
       chartRef.current.data.datasets = buildDatasets();
       chartRef.current.update("none");
     }
-  }, [chartCanvas, level, logY, spectrum, modelY, components, selectedId]);
+  }, [
+    chartCanvas,
+    level,
+    logY,
+    spectrum,
+    modelY,
+    components,
+    telluricComponents,
+    selectedId,
+    selectedTelluricId,
+    continuumFit,
+    phase,
+    baselineLocked,
+    showResidual,
+  ]);
 
   React.useEffect(
     () => () => {
@@ -1616,7 +2001,14 @@ function SpectrumGameView(props) {
    * lands on the next real line instead of on empty sky or on top of the previous one.
    */
   function unexplainedFeature(current) {
-    const model = composeSpectrum(spectrum.x, current, level.baseline, level.mode);
+    const model = composeSpectrum(
+      spectrum.x,
+      telluricComponents.concat(current),
+      lockedOrLiveContinuum,
+      level.mode,
+      level.xMin,
+      level.xMax
+    );
     let bestIdx = -1;
     let bestGap = 0;
     for (let i = 0; i < spectrum.x.length; i++) {
@@ -1634,6 +2026,7 @@ function SpectrumGameView(props) {
   }
 
   function handleAddComponent() {
+    if (needsBaseline && !baselineLocked) return;
     setComponents((prev) => {
       if (prev.length >= maxComponents) return prev;
       const nextId = prev.length ? Math.max.apply(null, prev.map((c) => c.id)) + 1 : 1;
@@ -1647,6 +2040,7 @@ function SpectrumGameView(props) {
           : level.xMin + fraction * (level.xMax - level.xMin),
         sigma: defaults.sigma,
         tau: defaults.tau,
+        role: "science",
       };
       setSelectedId(nextId);
       return prev.concat([next]);
@@ -1655,15 +2049,23 @@ function SpectrumGameView(props) {
 
   function handleRemoveComponent(id) {
     setComponents((prev) => {
-      if (prev.length <= 1) return prev;
+      if (prev.length <= 1 && !needsBaseline) return prev;
       const next = prev.filter((c) => c.id !== id);
       if (id === selectedId && next.length) setSelectedId(next[0].id);
+      else if (!next.length) setSelectedId(null);
       return next;
     });
   }
 
   function handleUpdateComponent(id, field, value) {
     setComponents((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+  }
+
+  function handleUpdateTelluric(id, field, value) {
+    if (baselineLocked) return;
+    setTelluricComponents((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
+    );
   }
 
   function handleNudgeCenter(id, delta) {
@@ -1676,46 +2078,106 @@ function SpectrumGameView(props) {
     );
   }
 
+  function handleNudgeTelluric(id, delta) {
+    if (baselineLocked) return;
+    setTelluricComponents((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, center: Math.min(level.xMax, Math.max(level.xMin, c.center + delta)) }
+          : c
+      )
+    );
+  }
+
+  function handleLockBaseline() {
+    if (!canLockBaseline) return;
+    setBaselineLocked(true);
+    setPhase("lines");
+    setShowResidual(true);
+    if (!components.length) {
+      const mid = spectrum.x[Math.floor(spectrum.x.length / 2)];
+      setComponents([
+        {
+          id: 1,
+          amplitude: defaults.amplitude,
+          center: mid,
+          sigma: defaults.sigma,
+          tau: defaults.tau,
+          role: "science",
+        },
+      ]);
+      setSelectedId(1);
+    }
+  }
+
+  function handleUnlockBaseline() {
+    setBaselineLocked(false);
+    setPhase("baseline");
+    setShowResidual(false);
+    setCompleted(false);
+    setCompletionSummary(null);
+  }
+
   function handleReset() {
-    setComponents([
-      {
-        id: 1,
-        amplitude: defaults.amplitude,
-        center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-        sigma: defaults.sigma,
-        tau: defaults.tau,
-      },
-    ]);
-    setSelectedId(1);
+    setContinuumFit(continuumDefaults(level));
+    setTelluricComponents(seedTelluricComponents(level));
+    setBaselineLocked(!needsBaseline);
+    setPhase(needsBaseline ? "baseline" : "lines");
+    setShowResidual(false);
+    setComponents(
+      needsBaseline
+        ? []
+        : [
+            {
+              id: 1,
+              amplitude: defaults.amplitude,
+              center: spectrum.x[Math.floor(spectrum.x.length / 2)],
+              sigma: defaults.sigma,
+              tau: defaults.tau,
+              role: "science",
+            },
+          ]
+    );
+    setSelectedId(needsBaseline ? null : 1);
+    setSelectedTelluricId(
+      (seedTelluricComponents(level)[0] && seedTelluricComponents(level)[0].id) || null
+    );
     setCompleted(false);
     setCompletionSummary(null);
   }
 
   function handleSubmit() {
-    const lineErrors = computeLineErrors(gradedLines, components);
-    const allWithin = lineErrors.every(
+    if (needsBaseline && !baselineLocked) return;
+    const lineErrors = computeLineErrors(gradedScience, components);
+    const allScienceWithin = lineErrors.every(
       (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
     );
-    // Weak lines never decide the pass, but a player who fits them anyway gets the credit.
+    const telluricErrors = computeLineErrors(gradedTellurics, telluricComponents);
+    const allTelluricWithin =
+      !gradedTellurics.length ||
+      telluricErrors.every(
+        (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
+      );
     const claimed = new Set(lineErrors.map((le) => le.matchedGaussian && le.matchedGaussian.id));
     const spare = components.filter((c) => !claimed.has(c.id));
-    const extraLines = spectrum.trueLines.filter((line) => !isGradedLine(line));
+    const extraLines = scienceTruth.filter((line) => !isGradedLine(line));
     const bonusErrors = computeLineErrors(extraLines, spare).filter(
       (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
     );
-    const meanErr = meanPercentError(lineErrors);
+    const meanErr = meanPercentError(lineErrors.concat(telluricErrors));
     const stars = starsFromMeanError(meanErr, starBandsForLevel(level));
     const fittedCenters = lineErrors.map((le) =>
       le.matchedGaussian ? le.matchedGaussian.center : null
     );
     const sonification = sonifyAxisValues(fittedCenters, level);
+    const passed = allScienceWithin && allTelluricWithin && (!needsBaseline || baselineLocked);
     const summary = {
       levelId: level.id,
       levelName: level.name,
       axis: level.axis || "GHz",
       mode: level.mode || "emission",
       track: level.track,
-      lineErrors,
+      lineErrors: lineErrors.concat(telluricErrors),
       bonusErrors,
       extraLineCount: extraLines.length,
       mse,
@@ -1723,11 +2185,12 @@ function SpectrumGameView(props) {
       meanErr,
       stars,
       sonification,
-      passed: allWithin,
+      passed,
+      baselineLocked: !needsBaseline || baselineLocked,
     };
     setCompletionSummary(summary);
-    setCompleted(allWithin);
-    if (allWithin) onCompletion(summary);
+    setCompleted(passed);
+    if (passed) onCompletion(summary);
   }
 
   const fitQuality = describeFitQuality(fitPct);
@@ -1751,6 +2214,26 @@ function SpectrumGameView(props) {
             { className: "mode-pill " + (absorb ? "absorption" : "emission") },
             absorb ? "Absorption" : "Emission"
           ),
+          needsBaseline &&
+            React.createElement(
+              "span",
+              {
+                className:
+                  "mode-pill " + (baselineLocked ? "emission" : "absorption"),
+              },
+              baselineLocked ? "Phase 2 · Lines" : "Phase 1 · Baseline"
+            ),
+          baselineLocked &&
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button tiny-button",
+                onClick: () => setShowResidual((v) => !v),
+                "aria-pressed": showResidual,
+              },
+              showResidual ? "Show raw spectrum" : "Show residual"
+            ),
           level.allowLogY &&
             React.createElement(
               "button",
@@ -1777,14 +2260,26 @@ function SpectrumGameView(props) {
         fitQuality.label,
         " (spectrum mismatch ≈ ",
         Number.isFinite(fitPct) ? fitPct.toFixed(1) : "—",
-        "% of intensity range)"
+        "% of intensity range)",
+        needsBaseline && !baselineLocked
+          ? " · Baseline residual ≈ " +
+            (Number.isFinite(baselineFitPct) ? baselineFitPct.toFixed(1) : "—") +
+            "% (lock at ≤ " +
+            lockThreshold +
+            "%)"
+          : ""
       ),
-        React.createElement(
-          "div",
-          { className: "plot-hint" },
-          "Click the plot to move the selected component there. Every line drawn here can be",
-          " fitted — the weak ones just don't count towards the pass."
-        ),
+      React.createElement(
+        "div",
+        { className: "plot-hint" },
+        needsBaseline && !baselineLocked
+          ? "Phase 1: fit the continuum and the amber atmospheric dips in the spectrum" +
+            (telluricComponents.length ? " (Earth's air, not the Sun)" : "") +
+            ", then Lock baseline. Science lines stay locked until then."
+          : telluricTruth.length
+            ? "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected component."
+            : "Click the plot to move the selected component there. Every drawn science line can be fitted — weak ones may not decide the pass."
+      ),
       completed &&
         React.createElement(
           "div",
@@ -1801,98 +2296,113 @@ function SpectrumGameView(props) {
       { className: "controls-column" },
       React.createElement(
         "div",
-        { className: "panel" },
-        React.createElement(
-          "div",
-          { className: "controls-header" },
-          React.createElement("span", { className: "panel-title" }, "Line components"),
+        { className: "panel fit-panel" + (needsBaseline ? " fit-panel-phased" : "") },
+        needsBaseline &&
           React.createElement(
             "div",
-            { className: "controls-header-right" },
+            { className: "fit-tabs", role: "tablist", "aria-label": "Fitting steps" },
             React.createElement(
-              "span",
-              { className: "count-label" },
-              "Count: ",
-              components.length,
-              " / ",
-              maxComponents
+              "button",
+              {
+                type: "button",
+                role: "tab",
+                className: "fit-tab" + (phase === "baseline" ? " active" : ""),
+                "aria-selected": phase === "baseline",
+                onClick: () => setPhase("baseline"),
+              },
+              "1 · Baseline",
+              baselineLocked ? " ✓" : ""
             ),
             React.createElement(
               "button",
               {
                 type: "button",
-                className: "secondary-button",
-                onClick: handleAddComponent,
-                disabled: components.length >= maxComponents,
+                role: "tab",
+                className: "fit-tab" + (phase === "lines" ? " active" : ""),
+                "aria-selected": phase === "lines",
+                disabled: !baselineLocked,
+                title: baselineLocked
+                  ? "Fit the science lines"
+                  : "Lock the baseline first",
+                onClick: () => {
+                  if (baselineLocked) setPhase("lines");
+                },
               },
-              "+ Component"
+              "2 · Science lines"
             )
-          )
-        ),
-        React.createElement(
-          "div",
-          { className: "component-list" },
-          components.map((component, idx) =>
+          ),
+        needsBaseline &&
+          phase === "baseline" &&
+          React.createElement(
+            "div",
+            { className: "fit-subpage", role: "tabpanel" },
+          React.createElement(
+            "div",
+            { className: "controls-header" },
+            React.createElement(
+              "span",
+              { className: "panel-title" },
+              baselineLocked ? "Baseline (locked)" : "Fit continuum & atmosphere"
+            ),
             React.createElement(
               "div",
-              {
-                key: component.id,
-                className:
-                  "gaussian-row" + (component.id === selectedId ? " gaussian-row-selected" : ""),
-                onClick: () => setSelectedId(component.id),
-              },
-              React.createElement(
-                "div",
-                { className: "gaussian-row-header" },
+              { className: "controls-header-right" },
+              !baselineLocked &&
                 React.createElement(
-                  "span",
-                  null,
-                  React.createElement("span", {
-                    className: "component-swatch",
-                    style: { background: COMPONENT_COLORS[idx % COMPONENT_COLORS.length] },
-                  }),
-                  "Component ",
-                  idx + 1,
-                  component.id === selectedId
-                    ? React.createElement("span", { className: "selected-tag" }, "selected")
-                    : null
+                  "button",
+                  {
+                    type: "button",
+                    className: "primary-button",
+                    onClick: handleLockBaseline,
+                    disabled: !canLockBaseline,
+                    title: !canLockBaseline
+                      ? "Baseline residual still above " + lockThreshold + "%"
+                      : "Lock continuum and atmosphere",
+                  },
+                  "Lock baseline"
                 ),
-                components.length > 1 &&
-                  React.createElement(
-                    "button",
-                    {
-                      type: "button",
-                      className: "secondary-button tiny-button",
-                      onClick: (e) => {
-                        e.stopPropagation();
-                        handleRemoveComponent(component.id);
-                      },
-                    },
-                    "Remove"
-                  )
-              ),
+              baselineLocked &&
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "secondary-button tiny-button",
+                    onClick: handleUnlockBaseline,
+                  },
+                  "Unlock"
+                )
+            )
+          ),
+          continuumFit.type === "poly" &&
+            React.createElement(
+              "div",
+              { className: "continuum-controls" },
               React.createElement(
                 "div",
                 { className: "slider-group" },
                 React.createElement(
                   "div",
                   { className: "slider-label" },
-                  React.createElement("span", null, amplitudeLabel),
+                  React.createElement("span", null, "Continuum level c₀"),
                   React.createElement(
                     "span",
                     { className: "value" },
-                    component.amplitude.toFixed(2)
+                    continuumFit.c0.toFixed(3)
                   )
                 ),
                 React.createElement("input", {
                   type: "range",
-                  min: ranges.amplitudeMin,
-                  max: ranges.amplitudeMax,
-                  step: ranges.amplitudeStep,
-                  value: component.amplitude,
+                  min: 0,
+                  max: Math.max(2.5, trueContinuum.c0 * 1.8),
+                  step: 0.01,
+                  value: continuumFit.c0,
                   className: "slider-input",
+                  disabled: baselineLocked,
                   onChange: (e) =>
-                    handleUpdateComponent(component.id, "amplitude", parseFloat(e.target.value)),
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      c0: parseFloat(e.target.value),
+                    })),
                 })
               ),
               React.createElement(
@@ -1901,11 +2411,100 @@ function SpectrumGameView(props) {
                 React.createElement(
                   "div",
                   { className: "slider-label" },
-                  React.createElement("span", null, axis.centerLabel),
+                  React.createElement("span", null, "Slope c₁"),
                   React.createElement(
                     "span",
                     { className: "value" },
-                    formatAxisValue(component.center, axis.key)
+                    continuumFit.c1.toFixed(3)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: -1.5,
+                  max: 1.5,
+                  step: 0.01,
+                  value: continuumFit.c1,
+                  className: "slider-input",
+                  disabled: baselineLocked,
+                  onChange: (e) =>
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      c1: parseFloat(e.target.value),
+                    })),
+                })
+              ),
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Curvature c₂"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    (continuumFit.c2 || 0).toFixed(3)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: -1,
+                  max: 1,
+                  step: 0.01,
+                  value: continuumFit.c2 || 0,
+                  className: "slider-input",
+                  disabled: baselineLocked,
+                  onChange: (e) =>
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      c2: parseFloat(e.target.value),
+                    })),
+                })
+              )
+            ),
+          continuumFit.type === "wideGaussian" &&
+            React.createElement(
+              "div",
+              { className: "continuum-controls" },
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Wide continuum amplitude"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    continuumFit.amplitude.toFixed(2)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: 0,
+                  max: Math.max(4, continuumFit.amplitude * 2),
+                  step: 0.02,
+                  value: continuumFit.amplitude,
+                  className: "slider-input",
+                  disabled: baselineLocked,
+                  onChange: (e) =>
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      amplitude: parseFloat(e.target.value),
+                    })),
+                })
+              ),
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Wide continuum center"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    formatAxisValue(continuumFit.center, axis.key)
                   )
                 ),
                 React.createElement("input", {
@@ -1913,71 +2512,14 @@ function SpectrumGameView(props) {
                   min: level.xMin,
                   max: level.xMax,
                   step: ranges.centerStep,
-                  value: component.center,
+                  value: continuumFit.center,
                   className: "slider-input",
+                  disabled: baselineLocked,
                   onChange: (e) =>
-                    handleUpdateComponent(component.id, "center", parseFloat(e.target.value)),
-                }),
-                React.createElement(
-                  "div",
-                  { className: "fine-row" },
-                  React.createElement(
-                    "button",
-                    {
-                      type: "button",
-                      className: "secondary-button tiny-button",
-                      onClick: () => handleNudgeCenter(component.id, -ranges.centerFineStep),
-                      "aria-label": "Nudge center down",
-                    },
-                    "−"
-                  ),
-                  React.createElement("input", {
-                    type: "number",
-                    className: "fine-input",
-                    min: level.xMin,
-                    max: level.xMax,
-                    step: ranges.centerFineStep,
-                    value: component.center,
-                    onChange: (e) => {
-                      const v = parseFloat(e.target.value);
-                      if (isFinite(v)) handleUpdateComponent(component.id, "center", v);
-                    },
-                  }),
-                  React.createElement(
-                    "button",
-                    {
-                      type: "button",
-                      className: "secondary-button tiny-button",
-                      onClick: () => handleNudgeCenter(component.id, ranges.centerFineStep),
-                      "aria-label": "Nudge center up",
-                    },
-                    "+"
-                  ),
-                  React.createElement("span", { className: "fine-unit" }, axis.unit)
-                )
-              ),
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Width (sigma)"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    component.sigma.toFixed(axis.key === "nm" ? 3 : 2)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: ranges.sigmaMin,
-                  max: ranges.sigmaMax,
-                  step: ranges.sigmaStep,
-                  value: component.sigma,
-                  className: "slider-input",
-                  onChange: (e) =>
-                    handleUpdateComponent(component.id, "sigma", parseFloat(e.target.value)),
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      center: parseFloat(e.target.value),
+                    })),
                 })
               ),
               React.createElement(
@@ -1986,33 +2528,486 @@ function SpectrumGameView(props) {
                 React.createElement(
                   "div",
                   { className: "slider-label" },
-                  React.createElement("span", null, "Optical depth τ"),
+                  React.createElement("span", null, "Wide continuum sigma"),
                   React.createElement(
                     "span",
                     { className: "value" },
-                    component.tau.toFixed(2),
-                    " — ",
-                    describeTau(component.tau)
+                    continuumFit.sigma.toFixed(2)
+                  )
+                ),
+                React.createElement("input", {
+                  type: "range",
+                  min: (level.xMax - level.xMin) / 20,
+                  max: (level.xMax - level.xMin) * 2,
+                  step: (level.xMax - level.xMin) / 200,
+                  value: continuumFit.sigma,
+                  className: "slider-input",
+                  disabled: baselineLocked,
+                  onChange: (e) =>
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      sigma: parseFloat(e.target.value),
+                    })),
+                })
+              )
+            ),
+          continuumFit.type === "flat" &&
+            React.createElement(
+              "div",
+              { className: "continuum-controls" },
+              React.createElement(
+                "div",
+                { className: "slider-group" },
+                React.createElement(
+                  "div",
+                  { className: "slider-label" },
+                  React.createElement("span", null, "Continuum level"),
+                  React.createElement(
+                    "span",
+                    { className: "value" },
+                    continuumFit.c0.toFixed(3)
                   )
                 ),
                 React.createElement("input", {
                   type: "range",
                   min: 0,
-                  max: 1000,
-                  step: 1,
-                  value: tauToSlider(component.tau),
+                  max: Math.max(2.5, continuumFit.c0 * 2),
+                  step: 0.01,
+                  value: continuumFit.c0,
                   className: "slider-input",
+                  disabled: baselineLocked,
                   onChange: (e) =>
-                    handleUpdateComponent(
-                      component.id,
-                      "tau",
-                      sliderToTau(parseFloat(e.target.value))
-                    ),
+                    setContinuumFit((prev) => ({
+                      ...prev,
+                      c0: parseFloat(e.target.value),
+                    })),
                 })
               )
+            ),
+          telluricComponents.length > 0 &&
+            React.createElement(
+              "div",
+              { className: "telluric-block" },
+              React.createElement(
+                "div",
+                { className: "telluric-legend" },
+                React.createElement("span", {
+                  className: "component-swatch",
+                  style: { background: TELLURIC_COLOR },
+                }),
+                "Atmosphere (telluric) — amber in the spectrum; subtract before the solar lines"
+              ),
+              telluricComponents.map((component, idx) =>
+                React.createElement(
+                  "div",
+                  {
+                    key: component.id,
+                    className:
+                      "gaussian-row telluric-row" +
+                      (component.id === selectedTelluricId ? " gaussian-row-selected" : ""),
+                    onClick: () => {
+                      if (!baselineLocked) setSelectedTelluricId(component.id);
+                    },
+                  },
+                  React.createElement(
+                    "div",
+                    { className: "gaussian-row-header" },
+                    React.createElement(
+                      "span",
+                      null,
+                      React.createElement("span", {
+                        className: "component-swatch",
+                        style: { background: TELLURIC_COLOR },
+                      }),
+                      "Atmosphere ",
+                      idx + 1,
+                      telluricTruth[idx]
+                        ? " · " + lineSpeciesLabel(telluricTruth[idx])
+                        : ""
+                    )
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, "Depth"),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        component.amplitude.toFixed(2)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: ranges.amplitudeMin,
+                      max: ranges.amplitudeMax,
+                      step: ranges.amplitudeStep,
+                      value: component.amplitude,
+                      className: "slider-input",
+                      disabled: baselineLocked,
+                      onChange: (e) =>
+                        handleUpdateTelluric(
+                          component.id,
+                          "amplitude",
+                          parseFloat(e.target.value)
+                        ),
+                    })
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, axis.centerLabel),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        formatAxisValue(component.center, axis.key)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: level.xMin,
+                      max: level.xMax,
+                      step: ranges.centerStep,
+                      value: component.center,
+                      className: "slider-input",
+                      disabled: baselineLocked,
+                      onChange: (e) =>
+                        handleUpdateTelluric(
+                          component.id,
+                          "center",
+                          parseFloat(e.target.value)
+                        ),
+                    }),
+                    React.createElement(
+                      "div",
+                      { className: "fine-row" },
+                      React.createElement(
+                        "button",
+                        {
+                          type: "button",
+                          className: "secondary-button tiny-button",
+                          disabled: baselineLocked,
+                          onClick: () =>
+                            handleNudgeTelluric(component.id, -ranges.centerFineStep),
+                        },
+                        "−"
+                      ),
+                      React.createElement("input", {
+                        type: "number",
+                        className: "fine-input",
+                        min: level.xMin,
+                        max: level.xMax,
+                        step: ranges.centerFineStep,
+                        value: component.center,
+                        disabled: baselineLocked,
+                        onChange: (e) => {
+                          const v = parseFloat(e.target.value);
+                          if (isFinite(v)) handleUpdateTelluric(component.id, "center", v);
+                        },
+                      }),
+                      React.createElement(
+                        "button",
+                        {
+                          type: "button",
+                          className: "secondary-button tiny-button",
+                          disabled: baselineLocked,
+                          onClick: () =>
+                            handleNudgeTelluric(component.id, ranges.centerFineStep),
+                        },
+                        "+"
+                      ),
+                      React.createElement("span", { className: "fine-unit" }, axis.unit)
+                    )
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, "Width (sigma)"),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        component.sigma.toFixed(3)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: ranges.sigmaMin,
+                      max: ranges.sigmaMax,
+                      step: ranges.sigmaStep,
+                      value: component.sigma,
+                      className: "slider-input",
+                      disabled: baselineLocked,
+                      onChange: (e) =>
+                        handleUpdateTelluric(
+                          component.id,
+                          "sigma",
+                          parseFloat(e.target.value)
+                        ),
+                    })
+                  )
+                )
+              )
             )
-          )
         ),
+        (!needsBaseline || phase === "lines") &&
+          React.createElement(
+            "div",
+            {
+              className: needsBaseline ? "fit-subpage" : "fit-subpage fit-subpage-solo",
+              role: needsBaseline ? "tabpanel" : undefined,
+            },
+            React.createElement(
+              "div",
+              { className: "controls-header" },
+              React.createElement(
+                "span",
+                { className: "panel-title" },
+                needsBaseline ? "Fit science lines" : "Line components"
+              ),
+              React.createElement(
+                "div",
+                { className: "controls-header-right" },
+                React.createElement(
+                  "span",
+                  { className: "count-label" },
+                  "Count: ",
+                  components.length,
+                  " / ",
+                  maxComponents
+                ),
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "secondary-button",
+                    onClick: handleAddComponent,
+                    disabled:
+                      components.length >= maxComponents ||
+                      (needsBaseline && !baselineLocked),
+                  },
+                  "+ Component"
+                )
+              )
+            ),
+            needsBaseline &&
+              !baselineLocked &&
+              React.createElement(
+                "p",
+                { className: "phase-lock-hint" },
+                "Science-line controls unlock after you lock the baseline."
+              ),
+            React.createElement(
+              "div",
+              { className: "component-list" },
+              components.map((component, idx) =>
+                React.createElement(
+                  "div",
+                  {
+                    key: component.id,
+                    className:
+                      "gaussian-row" +
+                      (component.id === selectedId ? " gaussian-row-selected" : ""),
+                    onClick: () => {
+                      if (!needsBaseline || baselineLocked) setSelectedId(component.id);
+                    },
+                  },
+                  React.createElement(
+                    "div",
+                    { className: "gaussian-row-header" },
+                    React.createElement(
+                      "span",
+                      null,
+                      React.createElement("span", {
+                        className: "component-swatch",
+                        style: {
+                          background: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
+                        },
+                      }),
+                      "Component ",
+                      idx + 1,
+                      component.id === selectedId
+                        ? React.createElement("span", { className: "selected-tag" }, "selected")
+                        : null
+                    ),
+                    components.length > 1 &&
+                      React.createElement(
+                        "button",
+                        {
+                          type: "button",
+                          className: "secondary-button tiny-button",
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            handleRemoveComponent(component.id);
+                          },
+                        },
+                        "Remove"
+                      )
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, amplitudeLabel),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        component.amplitude.toFixed(2)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: ranges.amplitudeMin,
+                      max: ranges.amplitudeMax,
+                      step: ranges.amplitudeStep,
+                      value: component.amplitude,
+                      className: "slider-input",
+                      onChange: (e) =>
+                        handleUpdateComponent(
+                          component.id,
+                          "amplitude",
+                          parseFloat(e.target.value)
+                        ),
+                    })
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, axis.centerLabel),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        formatAxisValue(component.center, axis.key)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: level.xMin,
+                      max: level.xMax,
+                      step: ranges.centerStep,
+                      value: component.center,
+                      className: "slider-input",
+                      onChange: (e) =>
+                        handleUpdateComponent(
+                          component.id,
+                          "center",
+                          parseFloat(e.target.value)
+                        ),
+                    }),
+                    React.createElement(
+                      "div",
+                      { className: "fine-row" },
+                      React.createElement(
+                        "button",
+                        {
+                          type: "button",
+                          className: "secondary-button tiny-button",
+                          onClick: () =>
+                            handleNudgeCenter(component.id, -ranges.centerFineStep),
+                          "aria-label": "Nudge center down",
+                        },
+                        "−"
+                      ),
+                      React.createElement("input", {
+                        type: "number",
+                        className: "fine-input",
+                        min: level.xMin,
+                        max: level.xMax,
+                        step: ranges.centerFineStep,
+                        value: component.center,
+                        onChange: (e) => {
+                          const v = parseFloat(e.target.value);
+                          if (isFinite(v)) handleUpdateComponent(component.id, "center", v);
+                        },
+                      }),
+                      React.createElement(
+                        "button",
+                        {
+                          type: "button",
+                          className: "secondary-button tiny-button",
+                          onClick: () =>
+                            handleNudgeCenter(component.id, ranges.centerFineStep),
+                          "aria-label": "Nudge center up",
+                        },
+                        "+"
+                      ),
+                      React.createElement("span", { className: "fine-unit" }, axis.unit)
+                    )
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, "Width (sigma)"),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        component.sigma.toFixed(axis.key === "nm" ? 3 : 2)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: ranges.sigmaMin,
+                      max: ranges.sigmaMax,
+                      step: ranges.sigmaStep,
+                      value: component.sigma,
+                      className: "slider-input",
+                      onChange: (e) =>
+                        handleUpdateComponent(
+                          component.id,
+                          "sigma",
+                          parseFloat(e.target.value)
+                        ),
+                    })
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "slider-group" },
+                    React.createElement(
+                      "div",
+                      { className: "slider-label" },
+                      React.createElement("span", null, "Optical depth τ"),
+                      React.createElement(
+                        "span",
+                        { className: "value" },
+                        component.tau.toFixed(2),
+                        " — ",
+                        describeTau(component.tau)
+                      )
+                    ),
+                    React.createElement("input", {
+                      type: "range",
+                      min: 0,
+                      max: 1000,
+                      step: 1,
+                      value: tauToSlider(component.tau),
+                      className: "slider-input",
+                      onChange: (e) =>
+                        handleUpdateComponent(
+                          component.id,
+                          "tau",
+                          sliderToTau(parseFloat(e.target.value))
+                        ),
+                    })
+                  )
+                )
+              )
+            )
+          ),
         React.createElement(
           "div",
           { className: "button-row" },
@@ -2023,7 +3018,12 @@ function SpectrumGameView(props) {
           ),
           React.createElement(
             "button",
-            { type: "button", className: "primary-button", onClick: handleSubmit },
+            {
+              type: "button",
+              className: "primary-button",
+              onClick: handleSubmit,
+              disabled: needsBaseline && !baselineLocked,
+            },
             "Submit fit"
           )
         )
@@ -2039,11 +3039,17 @@ function SpectrumGameView(props) {
             "div",
             { className: "metric-pill" },
             "Scored lines: ",
-            gradedLines.length,
-            gradedLines.length < spectrum.trueLines.length
+            gradedScience.length + gradedTellurics.length,
+            gradedScience.length + gradedTellurics.length < spectrum.trueLines.length
               ? " of " + spectrum.trueLines.length
               : ""
           ),
+          needsBaseline &&
+            React.createElement(
+              "div",
+              { className: "metric-pill" },
+              baselineLocked ? "Baseline locked" : "Baseline unlocked"
+            ),
           React.createElement("div", { className: "metric-pill" }, "Max components: ", maxComponents),
           React.createElement(
             "div",
@@ -2058,8 +3064,8 @@ function SpectrumGameView(props) {
           "div",
           { className: "hud-status" },
           axis.key === "nm"
-            ? "Wavelengths are real solar Fraunhofer lines. Match the model (green) to the spectrum (blue), then click \"Submit fit\"."
-            : 'Frequencies are real astronomical lines (CDMS). Match the model (green) to the spectrum (blue), then click "Submit fit".'
+            ? "Wavelengths are real solar Fraunhofer lines. On two-step levels, lock continuum and amber telluric O₂ first, then fit the solar lines."
+            : "Frequencies are real astronomical lines (CDMS). On continuum levels, lock the baseline first, then fit the lines."
         ),
         React.createElement(
           "div",
@@ -2747,7 +3753,7 @@ function App() {
                   React.createElement(
                     "p",
                     null,
-                    "When a spectrum covers a wide range — like the CO ladder from 461 to 922 GHz, or the whole rainbow from red to violet — we can simply divide every frequency by one big number. The notes then sit in the true ratios of the real lines, so a factor of two in frequency really is an octave."
+                    "When a spectrum covers a wide range — like HEXOS Band 1a from 480 to 560 GHz, or the whole rainbow from red to violet — we can simply divide every frequency by one big number. The notes then sit in the true ratios of the real lines, so a factor of two in frequency really is an octave."
                   ),
                   React.createElement(
                     "p",

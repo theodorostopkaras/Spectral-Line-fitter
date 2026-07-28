@@ -34,12 +34,22 @@ contribution = Imax * (1 - exp(-tau(x))),   Imax = amplitude / (1 - exp(-tau))
 - **Amplitude** is always the peak height (or, in absorption, the depth), whatever `tau` does.
 - **Optical depth tau** only changes the *shape*: small tau is an ordinary Gaussian, large tau saturates the line into a flat-topped (or flat-bottomed) box. That is real physics — an opaque line cannot get any brighter than the source behind it.
 
-The spectrum is then composed once, per level mode:
+The spectrum is then composed once, per level mode, on top of a continuum that may be flat or shaped (polynomial / wide Gaussian):
 
-- **emission** — `baseline + sum of contributions`
+- **emission** — `continuum + sum of contributions`
 - **absorption** — `continuum - sum of contributions`, clamped at zero
 
 So the two modes are the same physics with a sign flip, which is exactly the point Levels 9–12 are there to make.
+
+### Continuum first (two-step levels)
+
+Levels 10 and 13 require a **baseline phase** before science lines:
+
+1. Fit the continuum (and, on Level 10, the amber **telluric** O₂ lines from Earth's atmosphere).
+2. Press **Lock baseline** when the residual away from science lines is good enough and the atmospheric centres are close.
+3. Then fit the science lines. **Show residual** subtracts the locked continuum so the lines stand out.
+
+Telluric components are drawn in amber and count toward the pass — they are noise from our air, not solar features.
 
 ### How to play
 
@@ -67,9 +77,9 @@ Spectral lines are far outside human hearing (~20 Hz–20 kHz): a 100 GHz radio 
 | Rule | Used on | What it does |
 |------|---------|--------------|
 | **stretch** | narrow radio levels (1–6, 9) | **180 Hz of pitch per 1 GHz** of separation, then shifted into 180–1800 Hz. Exaggerated on purpose — neighbouring molecular lines would otherwise be the same note. Pitch *differences* are meaningful, ratios are not. |
-| **ratio** | wide levels (7, 8) and all solar levels (10–12) | Divide every real frequency by **one** constant K, chosen so the level's window lands near 632 Hz (clamped to 150–4000 Hz). Frequency **ratios** survive, so you hear the true musical intervals of the real lines. |
+| **ratio** | wide levels (7, 8, 13) and all solar levels (10–12) | Divide every real frequency by **one** constant K, chosen so the level's window lands near 632 Hz (clamped to 150–4000 Hz). Frequency **ratios** survive, so you hear the true musical intervals of the real lines. |
 
-Level 8 is the showpiece for the ratio rule: CO J=4-3 at 461.041 GHz through J=8-7 at 921.800 GHz is a **4:5:6:7:8 harmonic series** spanning almost exactly one octave, so **Play all lines** is a genuine overtone chord — and the octave being very slightly flat is real centrifugal stretching of the CO molecule.
+Level 8 is the showpiece for the ratio rule on the radio track: a curated cut of Herschel/HIFI **HEXOS Band 1a** (480–560 GHz) toward Orion KL, with seven real lines including water and the CO isotopes. Frequency ratios are preserved, so the chord you hear matches the true intervals of those lines.
 
 Other audio notes:
 
@@ -90,14 +100,15 @@ Other audio notes:
 | 5 Submm blend | 228–246 GHz | CO 2-1, CS 5-4, one U-line | A second U-line sits on the flank of CS |
 | 6 Dense tracers | 263–282 GHz | HCN, HCO+, HNC (J=3-2), one unknown | Optically thick lines |
 | 7 Wide 3 mm scan | 84–116 GHz | 8 of 16 lines | 20:1 intensity range, ratio sonification, log-Y toggle |
-| 8 CO ladder scan | 450–930 GHz | CO 4-3…8-7, H2O, CI | HEXOS-flavoured octave scan with a weak forest |
+| 8 HEXOS Band 1a | 480–560 GHz | CI, HCN, HCO+, CS, C18O, 13CO, H2O | Curated Orion KL vignette; every drawn line is scored |
 | 9 Radio absorption | 86–95 GHz | C2H, HCN, HCO+, HNC, N2H+ | Level 1's molecules against a bright continuum; N2H+ core saturated |
+| 13 Continuum first | 88–116 GHz | HCN, HCO+, N2H+, CS, C18O, 13CO, CO | Rising poly continuum — lock baseline, then fit lines |
 
 **Solar track — absorption, Fraunhofer wavelengths**
 
 | Level | Band | Scored lines | Notes |
 |-------|------|--------------|-------|
-| 10 Solar spectrum | 380–700 nm | Ca II K/H, H-delta, H-gamma, H-beta, Mg b (blend), Na D (blend), H-alpha | Whole visible range at school-spectroscope resolution; two telluric O2 bands are drawn but not scored |
+| 10 Solar spectrum | 380–700 nm | Ca II K/H, Balmer lines, Mg b, Na D + telluric O₂ | Two-step: sloping continuum + amber atmosphere first |
 | 11 Magnesium close-up | 515.5–519.5 nm | Mg I b1, b2, b4 | Level 10's single “Mg b” resolves into a triplet, with Fe I wedged against b4 |
 | 12 Sodium close-up | 586.5–591.5 nm | Na I D2, D1 | Both cores saturated flat; He I D3 nearby, drawn but not scored |
 
@@ -130,7 +141,7 @@ Scores stay on that browser/kiosk only; there is no online server.
 - **Vol** — master volume
 - **Mute** / **Unmute**
 - **Home** — return to attract screen (during play)
-- **Radio L1–L9** and **Solar L10–L12** — jump to any level at any time, in any order (a ✓ marks levels you have passed)
+- **Radio L1–L9, L13** and **Solar L10–L12** — jump to any level at any time, in any order (a ✓ marks levels you have passed)
 
 ### Credits
 

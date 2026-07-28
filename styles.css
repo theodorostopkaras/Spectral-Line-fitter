@@ -943,6 +943,108 @@ body {
   opacity: 0.6;
 }
 
+.phase-lock-hint {
+  font-size: 0.78rem;
+  opacity: 0.8;
+  margin: 0 0 8px;
+  color: #fdba74;
+}
+
+.controls-column > .panel.fit-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.fit-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.fit-tab {
+  flex: 1 1 0;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(80, 80, 160, 0.7);
+  background: rgba(15, 23, 42, 0.75);
+  color: #c7d2fe;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  min-height: 40px;
+}
+
+.fit-tab.active {
+  background: rgba(79, 70, 229, 0.35);
+  border-color: rgba(129, 140, 248, 0.95);
+  color: #eef2ff;
+  font-weight: 600;
+}
+
+.fit-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fit-subpage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.fit-subpage .component-list,
+.fit-subpage .telluric-block {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: clamp(180px, 42vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.fit-panel > .button-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(80, 80, 160, 0.5);
+  flex: 0 0 auto;
+}
+
+.baseline-panel {
+  border-color: rgba(251, 146, 60, 0.45);
+}
+
+.continuum-controls {
+  margin-bottom: 8px;
+}
+
+.telluric-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(251, 146, 60, 0.35);
+}
+
+.telluric-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: #fdba74;
+  margin-bottom: 8px;
+}
+
+.telluric-row {
+  border-color: rgba(251, 146, 60, 0.35);
+}
+
+.telluric-row.gaussian-row-selected {
+  border-color: rgba(251, 146, 60, 0.95);
+}
+
 .leaderboard-panel {
   overflow-x: auto;
 }
