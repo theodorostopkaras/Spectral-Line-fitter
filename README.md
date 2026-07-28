@@ -62,7 +62,7 @@ Telluric components are drawn in amber and count toward the pass — they are no
 3. Placing a center on a wide level: **click the plot** to drop the selected component there, then use the **fine nudge** buttons or the fine number box; the slider is for coarse moves.
 4. On the wide emission levels, press **Stretch weak lines (log)** to switch the intensity axis to logarithmic and see the faint forest under the bright lines.
 5. Match the green **model** to the blue **observed spectrum**.
-6. Click **Submit fit**. You pass when every **scored** line center is inside that level's threshold (0.015%–0.5%, see the table below). Weak lines never decide the pass, but any you fit anyway are credited as a **bonus** in the results and in the CSV.
+6. Click **Submit fit**. You pass when **every** line center on the plot is inside that level's threshold (0.015%–0.5%, see the table below).
 7. In the congratulations box you can:
    - See **stars**, mean error %, MSE, and fitted parameters (including tau and audible Hz)
    - Enter your **name** and **Save to leaderboard**
@@ -91,28 +91,28 @@ Other audio notes:
 
 **Radio track — emission, CDMS rest frequencies** (Level 9 is absorption)
 
-| Level | Band | Scored lines | Notes |
-|-------|------|--------------|-------|
+| Level | Band | Lines (all scored) | Notes |
+|-------|------|--------------------|-------|
 | 1 Warm-up | 86–95 GHz | HCN, HCO+ | Two lines, overlapping just enough to matter |
-| 2 Blended | 93–102 GHz | N2H+, C34S, CS, SO, HC3N | Plus one unidentified line in the C34S shoulder |
-| 3 Crowded | 217–235 GHz | H2CO, C18O, 13CO, CO 2-1 | H2CO pair under a linewidth apart; CO saturated flat |
-| 4 3 mm band | 108–117 GHz | C18O, 13CO, CO 1-0, one unknown | The unknown at 113.49 GHz counts too |
-| 5 Submm blend | 228–246 GHz | CO 2-1, CS 5-4, one U-line | A second U-line sits on the flank of CS |
+| 2 Blended | 93–102 GHz | N2H+, C34S, CS, SO, HC3N + U-line | Unidentified line in the C34S shoulder |
+| 3 Crowded | 217–235 GHz | H2CO, C18O, 13CO, CO 2-1 + U-line | H2CO pair under a linewidth apart; CO saturated flat |
+| 4 3 mm band | 108–117 GHz | C18O, 13CO, CO 1-0, one unknown | Unknown at 113.49 GHz |
+| 5 Submm blend | 228–246 GHz | CO 2-1, CS 5-4, two U-lines | Second U-line on the flank of CS |
 | 6 Dense tracers | 263–282 GHz | HCN, HCO+, HNC (J=3-2), one unknown | Optically thick lines |
-| 7 Wide 3 mm scan | 84–116 GHz | 8 of 16 lines | 20:1 intensity range, ratio sonification, log-Y toggle |
-| 8 HEXOS Band 1a | 480–560 GHz | CI, HCN, HCO+, CS, C18O, 13CO, H2O | Curated Orion KL vignette; every drawn line is scored |
-| 9 Radio absorption | 86–95 GHz | C2H, HCN, HCO+, HNC, N2H+ | Level 1's molecules against a bright continuum; N2H+ core saturated |
+| 7 Wide 3 mm scan | 84–116 GHz | 16 lines (SiO through CO) | 20:1 intensity range, ratio sonification, log-Y toggle |
+| 8 HEXOS Band 1a | 480–560 GHz | CI, HCN, HCO+, CS, C18O, 13CO, H2O | Curated Orion KL vignette |
+| 9 Radio absorption | 86–95 GHz | SiO, H13CO+, C2H, HCN, HCO+, HNC, N2H+ | Absorption vs continuum; N2H+ core saturated |
 | 13 Continuum first | 88–116 GHz | HCN, HCO+, N2H+, CS, C18O, 13CO, CO | Rising poly continuum — lock baseline, then fit lines |
 
 **Solar track — absorption, Fraunhofer wavelengths**
 
-| Level | Band | Scored lines | Notes |
-|-------|------|--------------|-------|
-| 10 Solar spectrum | 380–700 nm | Ca II K/H, Balmer lines, Mg b, Na D + telluric O₂ | Two-step: sloping continuum + amber atmosphere first |
-| 11 Magnesium close-up | 515.5–519.5 nm | Mg I b1, b2, b4 | Level 10's single “Mg b” resolves into a triplet, with Fe I wedged against b4 |
-| 12 Sodium close-up | 586.5–591.5 nm | Na I D2, D1 | Both cores saturated flat; He I D3 nearby, drawn but not scored |
+| Level | Band | Lines (all scored) | Notes |
+|-------|------|--------------------|-------|
+| 10 Solar spectrum | 380–700 nm | Ca II K/H, Fe, Balmer, Mg b, Na D, He I + telluric O₂ | Two-step: sloping continuum + amber atmosphere first |
+| 11 Magnesium close-up | 515.5–519.5 nm | Mg I b1, b2, b4 + Fe I | Level 10's single “Mg b” resolves into a triplet |
+| 12 Sodium close-up | 586.5–591.5 nm | Na I D2, D1 + He I D3 | Both Na cores saturated flat |
 
-Difficulty rises with blending, dynamic range, saturation, and unknown species. On the crowded levels many lines are drawn but flagged **not scored**, exactly as a real survey contains far more features than you would fit by hand — you are free to fit them all, and get bonus credit for the ones you catch.
+Difficulty rises with blending, dynamic range, saturation, and unknown species. Every line drawn on the plot counts toward pass and stars.
 
 ### Scoring and leaderboard
 
@@ -134,7 +134,7 @@ Scores stay on that browser/kiosk only; there is no online server.
 - Visible-spectrum colour wash behind the solar plots
 - Large touch-friendly buttons, click-to-place on the plot
 - Idle timeout (120 s) → back to attract screen
-- CSV export of level mode, spectral unit, every fitted line (scored and bonus), tau, errors, the audio rule, and audible Hz
+- CSV export of level mode, spectral unit, every fitted line, tau, errors, the audio rule, and audible Hz
 
 ### Controls (header)
 

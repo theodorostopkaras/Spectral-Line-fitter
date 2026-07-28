@@ -320,7 +320,7 @@ function generateSpectrum(level) {
   return { x, y, trueLines: level.trueLines.slice() };
 }
 
-/** Weak forest lines are drawn but not scored, so a crowded scan stays playable. */
+/** Every drawn spectral line counts toward pass / stars. */
 function isGradedLine(line) {
   return line.graded !== false;
 }
@@ -899,7 +899,7 @@ const LEVELS = [
     axis: "GHz",
     sonify: "stretch",
     blurb:
-      "Six species in nine gigahertz. One unidentified line hides in the shoulder of C34S — it is drawn but not scored.",
+      "Six species in nine gigahertz. One unidentified line hides in the shoulder of C34S — find it too; every line on the plot counts.",
     xMin: 93,
     xMax: 102,
     noiseLevel: 0.2,
@@ -908,7 +908,7 @@ const LEVELS = [
     trueLines: [
       { amplitude: 1.6, center: 93.173764, sigma: 0.35, tau: 0.3, knownLine: true, label: "N2H+", transition: "J=1-0" },
       { amplitude: 2.4, center: 96.412950, sigma: 0.28, tau: 0.5, knownLine: true, label: "C34S", transition: "J=2-1" },
-      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false, graded: false },
+      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false },
       { amplitude: 3.0, center: 97.980953, sigma: 0.32, tau: 1.6, knownLine: true, label: "CS", transition: "J=2-1" },
       { amplitude: 2.6, center: 99.299870, sigma: 0.24, tau: 0.8, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
       { amplitude: 0.9, center: 100.076392, sigma: 0.22, tau: 0.25, knownLine: true, label: "HC3N", transition: "J=11-10" },
@@ -929,7 +929,7 @@ const LEVELS = [
     errorThresholdPercent: 0.25,
     trueLines: [
       { amplitude: 2.5, center: 218.222192, sigma: 0.28, tau: 0.8, knownLine: true, label: "H2CO", transition: "3(0,3)-2(0,2)" },
-      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false, graded: false },
+      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false },
       { amplitude: 2.2, center: 219.560319, sigma: 0.26, tau: 0.5, knownLine: true, label: "C18O", transition: "J=2-1" },
       { amplitude: 2.6, center: 220.398684, sigma: 0.26, tau: 1.2, knownLine: true, label: "13CO", transition: "J=2-1" },
       { amplitude: 4.0, center: 230.538000, sigma: 0.5, tau: 4.0, knownLine: true, label: "CO", transition: "J=2-1" },
@@ -971,7 +971,7 @@ const LEVELS = [
     trueLines: [
       { amplitude: 3.6, center: 230.538000, sigma: 0.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=2-1" },
       { amplitude: 1.4, center: 241.616183, sigma: 0.4, tau: 0.3, knownLine: false },
-      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false, graded: false },
+      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false },
       { amplitude: 2.4, center: 244.935557, sigma: 0.42, tau: 1.0, knownLine: true, label: "CS", transition: "J=5-4" },
     ],
   },
@@ -1003,7 +1003,7 @@ const LEVELS = [
     axis: "GHz",
     sonify: "ratio",
     blurb:
-      "Sixteen lines across 32 GHz, from CO twenty times brighter than the weakest feature. Only the eight strong lines are scored — use the log button to see the faint ones.",
+      "Sixteen lines across 32 GHz, from CO twenty times brighter than the weakest feature. Every line counts — use the log button to stretch the faint forest.",
     xMin: 84,
     xMax: 116,
     noiseLevel: 0.05,
@@ -1011,21 +1011,21 @@ const LEVELS = [
     errorThresholdPercent: 0.2,
     allowLogY: true,
     trueLines: [
-      { amplitude: 0.25, center: 86.243442, sigma: 0.11, tau: 0.2, knownLine: true, graded: false, label: "SiO", transition: "J=2-1 v=0" },
-      { amplitude: 0.18, center: 86.754294, sigma: 0.1, tau: 0.2, knownLine: true, graded: false, label: "H13CO+", transition: "J=1-0" },
-      { amplitude: 0.55, center: 87.316898, sigma: 0.12, tau: 0.3, knownLine: true, graded: false, label: "C2H", transition: "N=1-0" },
+      { amplitude: 0.25, center: 86.243442, sigma: 0.11, tau: 0.2, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
+      { amplitude: 0.18, center: 86.754294, sigma: 0.1, tau: 0.2, knownLine: true, label: "H13CO+", transition: "J=1-0" },
+      { amplitude: 0.55, center: 87.316898, sigma: 0.12, tau: 0.3, knownLine: true, label: "C2H", transition: "N=1-0" },
       { amplitude: 2.6, center: 88.631847, sigma: 0.12, tau: 2.0, knownLine: true, label: "HCN", transition: "J=1-0" },
       { amplitude: 2.2, center: 89.188523, sigma: 0.11, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
       { amplitude: 0.9, center: 90.663568, sigma: 0.11, tau: 0.5, knownLine: true, label: "HNC", transition: "J=1-0" },
       { amplitude: 1.1, center: 93.173764, sigma: 0.12, tau: 0.6, knownLine: true, label: "N2H+", transition: "J=1-0" },
-      { amplitude: 0.35, center: 96.412950, sigma: 0.1, tau: 0.3, knownLine: true, graded: false, label: "C34S", transition: "J=2-1" },
-      { amplitude: 0.3, center: 96.741375, sigma: 0.11, tau: 0.2, knownLine: true, graded: false, label: "CH3OH", transition: "2(0)-1(0) A+" },
+      { amplitude: 0.35, center: 96.412950, sigma: 0.1, tau: 0.3, knownLine: true, label: "C34S", transition: "J=2-1" },
+      { amplitude: 0.3, center: 96.741375, sigma: 0.11, tau: 0.2, knownLine: true, label: "CH3OH", transition: "2(0)-1(0) A+" },
       { amplitude: 1.5, center: 97.980953, sigma: 0.12, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
-      { amplitude: 0.65, center: 99.299870, sigma: 0.11, tau: 0.4, knownLine: true, graded: false, label: "SO", transition: "3(2)-2(1)" },
-      { amplitude: 0.22, center: 100.076392, sigma: 0.1, tau: 0.2, knownLine: true, graded: false, label: "HC3N", transition: "J=11-10" },
+      { amplitude: 0.65, center: 99.299870, sigma: 0.11, tau: 0.4, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
+      { amplitude: 0.22, center: 100.076392, sigma: 0.1, tau: 0.2, knownLine: true, label: "HC3N", transition: "J=11-10" },
       { amplitude: 0.8, center: 109.782173, sigma: 0.1, tau: 0.4, knownLine: true, label: "C18O", transition: "J=1-0" },
       { amplitude: 2.0, center: 110.201354, sigma: 0.11, tau: 1.2, knownLine: true, label: "13CO", transition: "J=1-0" },
-      { amplitude: 0.7, center: 113.490982, sigma: 0.13, tau: 0.5, knownLine: false, graded: false },
+      { amplitude: 0.7, center: 113.490982, sigma: 0.13, tau: 0.5, knownLine: false },
       { amplitude: 4.0, center: 115.271202, sigma: 0.13, tau: 5.0, knownLine: true, label: "CO", transition: "J=1-0" },
     ],
   },
@@ -1062,15 +1062,15 @@ const LEVELS = [
     axis: "GHz",
     sonify: "stretch",
     blurb:
-      "The same molecules as Level 1, but now seen against a bright continuum source: the lines cut down into it instead of sticking up. N2H+ is so opaque that its core is saturated flat.",
+      "Same 86–95 GHz window as Level 1, but in absorption against a bright continuum. HCN and HCO+ return, now joined by C2H, HNC and a saturated N2H+ core, plus faint SiO and H13CO+ on the side.",
     xMin: 86,
     xMax: 95,
     noiseLevel: 0.05,
     baseline: 3.2,
     errorThresholdPercent: 0.3,
     trueLines: [
-      { amplitude: 0.6, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, graded: false, label: "SiO", transition: "J=2-1 v=0" },
-      { amplitude: 0.4, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, graded: false, label: "H13CO+", transition: "J=1-0" },
+      { amplitude: 0.6, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
+      { amplitude: 0.4, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, label: "H13CO+", transition: "J=1-0" },
       { amplitude: 1.0, center: 87.316898, sigma: 0.2, tau: 0.6, knownLine: true, label: "C2H", transition: "N=1-0" },
       { amplitude: 2.0, center: 88.631847, sigma: 0.15, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
       { amplitude: 1.8, center: 89.188523, sigma: 0.14, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
@@ -1099,14 +1099,14 @@ const LEVELS = [
       { amplitude: 0.8, center: 393.366, sigma: 0.65, tau: 8, knownLine: true, label: "Ca II", transition: "K" },
       { amplitude: 0.75, center: 396.847, sigma: 0.62, tau: 7, knownLine: true, label: "Ca II", transition: "H" },
       { amplitude: 0.45, center: 410.175, sigma: 0.7, tau: 2.5, knownLine: true, label: "H I", transition: "h (H-delta)" },
-      { amplitude: 0.35, center: 430.78, sigma: 0.8, tau: 2, knownLine: true, graded: false, label: "Fe I", transition: "G band (with Ca I)" },
+      { amplitude: 0.35, center: 430.78, sigma: 0.8, tau: 2, knownLine: true, label: "Fe I", transition: "G band (with Ca I)" },
       { amplitude: 0.48, center: 434.047, sigma: 0.75, tau: 2.5, knownLine: true, label: "H I", transition: "G' (H-gamma)" },
-      { amplitude: 0.22, center: 438.355, sigma: 0.6, tau: 1, knownLine: true, graded: false, label: "Fe I", transition: "e" },
+      { amplitude: 0.22, center: 438.355, sigma: 0.6, tau: 1, knownLine: true, label: "Fe I", transition: "e" },
       { amplitude: 0.52, center: 486.134, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "F (H-beta)" },
-      { amplitude: 0.2, center: 495.761, sigma: 0.6, tau: 1, knownLine: true, graded: false, label: "Fe I", transition: "c" },
+      { amplitude: 0.2, center: 495.761, sigma: 0.6, tau: 1, knownLine: true, label: "Fe I", transition: "c" },
       { amplitude: 0.55, center: 517.3, sigma: 1.1, tau: 4, knownLine: true, label: "Mg I", transition: "b triplet (blend)" },
-      { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, graded: false, label: "Fe I", transition: "E2" },
-      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, graded: false, label: "He I", transition: "D3" },
+      { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, label: "Fe I", transition: "E2" },
+      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, label: "He I", transition: "D3" },
       { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D doublet (blend)" },
       { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, role: "telluric", label: "O2", transition: "a (telluric)" },
       { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "C (H-alpha)" },
@@ -1130,7 +1130,7 @@ const LEVELS = [
     showSpectrumColors: true,
     trueLines: [
       { amplitude: 0.6, center: 516.733, sigma: 0.042, tau: 3, knownLine: true, label: "Mg I", transition: "b4" },
-      { amplitude: 0.24, center: 516.891, sigma: 0.038, tau: 1.5, knownLine: true, graded: false, label: "Fe I", transition: "b3" },
+      { amplitude: 0.24, center: 516.891, sigma: 0.038, tau: 1.5, knownLine: true, label: "Fe I", transition: "b3" },
       { amplitude: 0.55, center: 517.27, sigma: 0.045, tau: 2.5, knownLine: true, label: "Mg I", transition: "b2" },
       { amplitude: 0.62, center: 518.362, sigma: 0.048, tau: 3, knownLine: true, label: "Mg I", transition: "b1" },
     ],
@@ -1151,7 +1151,7 @@ const LEVELS = [
     errorThresholdPercent: 0.02,
     showSpectrumColors: true,
     trueLines: [
-      { amplitude: 0.09, center: 587.562, sigma: 0.05, tau: 0.5, knownLine: true, graded: false, label: "He I", transition: "D3" },
+      { amplitude: 0.09, center: 587.562, sigma: 0.05, tau: 0.5, knownLine: true, label: "He I", transition: "D3" },
       { amplitude: 0.78, center: 588.995, sigma: 0.07, tau: 6, knownLine: true, label: "Na I", transition: "D2" },
       { amplitude: 0.7, center: 589.592, sigma: 0.065, tau: 5, knownLine: true, label: "Na I", transition: "D1" },
     ],
@@ -1556,7 +1556,7 @@ function AttractScreen(props) {
           null,
           "Radio levels show bright emission lines; the solar levels show dark Fraunhofer absorption lines."
         ),
-        React.createElement("li", null, "Submit your fit — pass when every scored line is close enough."),
+        React.createElement("li", null, "Submit your fit — pass when every line on the plot is close enough."),
         React.createElement("li", null, "Then hear your fitted lines as audible tones.")
       ),
       React.createElement(
@@ -2284,7 +2284,7 @@ function SpectrumGameView(props) {
         React.createElement(
           "div",
           { className: "completion-banner" },
-          "Level completed! Every scored line fitted within ",
+          "Level completed! Every line fitted within ",
           level.errorThresholdPercent,
           "% in ",
           axis.key === "nm" ? "wavelength" : "center frequency",
@@ -3038,11 +3038,8 @@ function SpectrumGameView(props) {
           React.createElement(
             "div",
             { className: "metric-pill" },
-            "Scored lines: ",
+            "Lines: ",
             gradedScience.length + gradedTellurics.length,
-            gradedScience.length + gradedTellurics.length < spectrum.trueLines.length
-              ? " of " + spectrum.trueLines.length
-              : ""
           ),
           needsBaseline &&
             React.createElement(
