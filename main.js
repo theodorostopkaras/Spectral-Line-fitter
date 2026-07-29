@@ -1,12 +1,15 @@
 // Spectrum Fitter — public outreach game
 // Radio rest frequencies from CDMS, solar Fraunhofer wavelengths from standard line tables.
 // Lines are emission or absorption and carry an optical depth, so strong lines saturate.
+// Every fitted parameter carries a physical unit: brightness temperature in K, line depth as
+// a fraction of the local continuum, widths in nm/GHz (with the velocity equivalent shown),
+// and the continuum itself is a normalised Planck curve (solar) or dust power law (radio).
 
 /**
  * @typedef {{ amplitude: number; center: number; sigma: number; tau: number }} LineParams
  * @typedef {{ amplitude: number; center: number; sigma: number; tau: number; knownLine: boolean; graded?: boolean; role?: "science" | "telluric"; label?: string; transition?: string }} TrueLine
  * @typedef {{ id: number; amplitude: number; center: number; sigma: number; tau: number; role?: "science" | "telluric" }} PlayerComponent
- * @typedef {{ type: "flat"; c0: number } | { type: "poly"; c0: number; c1: number; c2?: number } | { type: "wideGaussian"; amplitude: number; center: number; sigma: number; floor?: number }} ContinuumSpec
+ * @typedef {{ type: "flat"; c0: number } | { type: "solar"; temperatureK: number; airmass: number } | { type: "powerLaw"; refBrightnessK: number; index: number }} ContinuumSpec
  * @typedef {{ id: number; name: string; track: string; mode: "emission" | "absorption"; axis: "GHz" | "nm"; sonify: "stretch" | "ratio"; xMin: number; xMax: number; noiseLevel: number; baseline: number; continuum?: ContinuumSpec; continuumLockPercent?: number; trueLines: TrueLine[]; maxGaussians?: number; errorThresholdPercent: number; starBands?: number[]; allowLogY?: boolean; showSpectrumColors?: boolean; blurb?: string }} LevelConfig
  */
 
@@ -35,6 +38,15 @@ const MAX_NAME_LEN = 20;
 const TELLURIC_COLOR = "rgba(251, 146, 60, 0.95)";
 /** Default RMSE % of intensity range required to lock the baseline phase. */
 const DEFAULT_CONTINUUM_LOCK_PERCENT = 12;
+/** hc/k in nm·K, so Planck's exponent is simply HC_OVER_K_NM_K / (lambda_nm * T). */
+const HC_OVER_K_NM_K = 1.43877736e7;
+/** Rayleigh optical depth of the whole atmosphere at 550 nm, one airmass, at sea level. */
+const RAYLEIGH_TAU_550 = 0.0973;
+const RAYLEIGH_REF_NM = 550;
+/** Effective temperature of the solar photosphere — the answer to the Level 10 continuum. */
+const SUN_TEFF_K = 5772;
+/** sigma -> FWHM for a Gaussian. */
+const FWHM_PER_SIGMA = 2 * Math.sqrt(2 * Math.LN2);
 
 const AXES = {
   GHz: {
@@ -96,34 +108,59 @@ function evaluateLineProfile(x, p) {
   return x.map((xi) => imax * (1 - Math.exp(-tau * gaussianShape(xi, center, sigma))));
 }
 
-/** Continuum shape for a level (shaped poly / wide Gaussian, or a flat baseline). */
+/** Continuum shape for a level (physical solar / dust models, or a flat baseline). */
 function continuumSpec(level) {
   if (level && level.continuum) return level.continuum;
   return { type: "flat", c0: (level && level.baseline) || 0 };
 }
 
 /**
- * Evaluate the continuum along x. Polynomials use a normalised coordinate t in [-1, 1]
- * across the level window, so c1 and c2 stay O(1) and readable on the sliders.
+ * The wavelength (or frequency) the continuum is normalised at: the middle of the level's
+ * window. Every shaped continuum equals its reference brightness there, whatever the player
+ * does with the sliders, so the overall amplitude is never a free parameter.
+ */
+function continuumRefX(xMin, xMax) {
+  return (xMin + xMax) / 2;
+}
+
+/** Planck's law in wavelength, up to constants — only ratios are ever used. */
+function planckLambda(lambdaNm, temperatureK) {
+  if (!(lambdaNm > 0) || !(temperatureK > 0)) return 0;
+  const expArg = HC_OVER_K_NM_K / (lambdaNm * temperatureK);
+  return 1 / (Math.pow(lambdaNm, 5) * (Math.exp(expArg) - 1));
+}
+
+/** Rayleigh optical depth of the air column: scattering goes as lambda^-4, so blue is lost first. */
+function rayleighTau(lambdaNm, airmass) {
+  return (
+    RAYLEIGH_TAU_550 * airmass * Math.pow(RAYLEIGH_REF_NM / lambdaNm, 4)
+  );
+}
+
+/**
+ * Evaluate the continuum along x.
+ * - solar: normalised Planck curve at temperature T, reddened by `airmass` of Rayleigh
+ *   scattering. Both factors are 1 at the band centre, so the curvature comes from the solar
+ *   temperature and the slope from the amount of air we look through.
+ * - powerLaw: dust emission, S ~ nu^index, pinned to a known brightness at the band centre.
  */
 function evaluateContinuum(x, continuum, xMin, xMax) {
   const spec = continuum || { type: "flat", c0: 0 };
-  if (spec.type === "wideGaussian") {
-    const floor = spec.floor || 0;
+  if (spec.type === "solar") {
+    const ref = continuumRefX(xMin, xMax);
+    const planckRef = planckLambda(ref, spec.temperatureK);
+    const tauRef = rayleighTau(ref, spec.airmass);
+    if (!(planckRef > 0)) return x.map(() => 0);
     return x.map(
-      (xi) => floor + spec.amplitude * gaussianShape(xi, spec.center, spec.sigma)
+      (xi) =>
+        (planckLambda(xi, spec.temperatureK) / planckRef) *
+        Math.exp(-(rayleighTau(xi, spec.airmass) - tauRef))
     );
   }
-  if (spec.type === "poly") {
-    const mid = (xMin + xMax) / 2;
-    const half = (xMax - xMin) / 2 || 1;
-    const c0 = spec.c0 || 0;
-    const c1 = spec.c1 || 0;
-    const c2 = spec.c2 || 0;
-    return x.map((xi) => {
-      const t = (xi - mid) / half;
-      return c0 + c1 * t + c2 * t * t;
-    });
+  if (spec.type === "powerLaw") {
+    const ref = continuumRefX(xMin, xMax);
+    const refBrightness = spec.refBrightnessK != null ? spec.refBrightnessK : 1;
+    return x.map((xi) => refBrightness * Math.pow(xi / ref, spec.index));
   }
   const c0 = spec.c0 != null ? spec.c0 : 0;
   return x.map(() => c0);
@@ -149,7 +186,21 @@ function levelNeedsBaselinePhase(level) {
   return telluricLinesOf(level.trueLines).length > 0;
 }
 
-/** Continuum plus (emission) or minus (absorption) every line contribution. */
+/**
+ * Absorption transmission of one line: its `amplitude` is the depth at line centre as a
+ * fraction of whatever continuum sits behind it, so 0.8 always means "80 % of the light here
+ * is swallowed" no matter how the continuum slopes.
+ */
+function lineTransmission(x, line) {
+  const depth = evaluateLineProfile(x, line);
+  return depth.map((d) => 1 - Math.min(1, Math.max(0, d)));
+}
+
+/**
+ * Emission adds brightness temperatures onto the continuum; absorption multiplies the
+ * continuum by the transmission of every line in front of it (solar lines at the Sun, then
+ * telluric lines in our own air). The product can never go negative, so nothing is clamped.
+ */
 function composeSpectrum(x, lines, continuum, mode, xMin, xMax) {
   const absorb = isAbsorption(mode);
   const xmin = xMin != null ? xMin : x[0];
@@ -158,11 +209,13 @@ function composeSpectrum(x, lines, continuum, mode, xMin, xMax) {
     typeof continuum === "number" ? { type: "flat", c0: continuum } : continuum;
   const y = evaluateContinuum(x, contSpec, xmin, xmax);
   for (const line of lines) {
-    const contribution = evaluateLineProfile(x, line);
-    for (let i = 0; i < y.length; i++) y[i] += absorb ? -contribution[i] : contribution[i];
-  }
-  if (absorb) {
-    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
+    if (absorb) {
+      const transmission = lineTransmission(x, line);
+      for (let i = 0; i < y.length; i++) y[i] *= transmission[i];
+    } else {
+      const contribution = evaluateLineProfile(x, line);
+      for (let i = 0; i < y.length; i++) y[i] += contribution[i];
+    }
   }
   return y;
 }
@@ -172,10 +225,12 @@ function componentCurve(x, component, continuum, mode, xMin, xMax) {
   const contSpec =
     typeof continuum === "number" ? { type: "flat", c0: continuum } : continuum;
   const cont = evaluateContinuum(x, contSpec, xMin, xMax);
+  if (isAbsorption(mode)) {
+    const transmission = lineTransmission(x, component);
+    return cont.map((c, i) => c * transmission[i]);
+  }
   const contribution = evaluateLineProfile(x, component);
-  return isAbsorption(mode)
-    ? contribution.map((v, i) => Math.max(0, cont[i] - v))
-    : contribution.map((v, i) => cont[i] + v);
+  return contribution.map((v, i) => cont[i] + v);
 }
 
 /**
@@ -218,21 +273,81 @@ function baselineResidualPercent(spectrum, continuum, telluricComponents, scienc
   return (Math.sqrt(sum / n) / range) * 100;
 }
 
+/** Where the continuum sliders start: plausible but clearly not the answer. */
 function continuumDefaults(level) {
   const c = continuumSpec(level);
-  if (c.type === "poly") {
-    return { type: "poly", c0: c.c0 * 0.9, c1: 0, c2: 0 };
+  if (c.type === "solar") {
+    return { type: "solar", temperatureK: 5000, airmass: 1.6 };
   }
-  if (c.type === "wideGaussian") {
-    return {
-      type: "wideGaussian",
-      amplitude: c.amplitude * 0.75,
-      center: (level.xMin + level.xMax) / 2,
-      sigma: c.sigma * 1.4,
-      floor: c.floor || 0,
-    };
+  if (c.type === "powerLaw") {
+    return { type: "powerLaw", refBrightnessK: c.refBrightnessK, index: 1.5 };
   }
   return { type: "flat", c0: c.c0 };
+}
+
+/**
+ * What the player recovered from the continuum, next to the truth. This is the physical payoff
+ * of Level 10: fitting the curvature of the Sun's continuum measures its surface temperature.
+ */
+function continuumResults(fitted, truth) {
+  if (!fitted || !truth || fitted.type !== truth.type) return [];
+  if (truth.type === "solar") {
+    return [
+      {
+        label: "Solar temperature",
+        unit: "K",
+        fitted: Math.round(fitted.temperatureK),
+        truth: truth.temperatureK,
+        decimals: 0,
+      },
+      {
+        label: "Airmass",
+        unit: "",
+        fitted: fitted.airmass,
+        truth: truth.airmass,
+        decimals: 2,
+      },
+    ];
+  }
+  if (truth.type === "powerLaw") {
+    return [
+      {
+        label: "Dust spectral index α",
+        unit: "",
+        fitted: fitted.index,
+        truth: truth.index,
+        decimals: 2,
+      },
+    ];
+  }
+  return [];
+}
+
+/** Doppler equivalent of a width: the same sigma in km/s, whichever axis the level uses. */
+function velocityWidthKms(sigma, center) {
+  if (!(sigma > 0) || !(center > 0)) return NaN;
+  return (sigma / center) * (SPEED_OF_LIGHT_M_S / 1000);
+}
+
+/**
+ * The spectrograph behind a level. The drawn widths are far broader than a real Fraunhofer or
+ * molecular line, because a 0.01 nm line is invisible across a 320 nm window — so the width is
+ * the instrument's resolution, not the gas. That is also the point of the close-up levels:
+ * Fraunhofer's prism (R ~ 300) shows one dark "Mg b"; a grating (R ~ 5000) splits the triplet.
+ */
+function levelResolution(level) {
+  const lines = level && level.trueLines ? level.trueLines : [];
+  if (!lines.length) return null;
+  const sigmas = lines.map((l) => l.sigma).sort((a, b) => a - b);
+  const sigma = sigmas[Math.floor(sigmas.length * 0.25)];
+  const fwhm = sigma * FWHM_PER_SIGMA;
+  const mid = continuumRefX(level.xMin, level.xMax);
+  return {
+    sigma,
+    fwhm,
+    resolvingPower: fwhm > 0 ? mid / fwhm : NaN,
+    velocityKms: velocityWidthKms(fwhm, mid),
+  };
 }
 
 function seedTelluricComponents(level) {
@@ -377,7 +492,7 @@ function describeBonusLines(summary) {
       "This level also draws " +
       summary.extraLineCount +
       (summary.extraLineCount === 1 ? " weaker line" : " weaker lines") +
-      " that are not scored. There are enough components for those too — try fitting them as well."
+      " that are not scored. There are enough lines for those too — try fitting them as well."
     );
   }
   return (
@@ -1075,13 +1190,13 @@ const LEVELS = [
     baseline: 3.2,
     errorThresholdPercent: 0.3,
     trueLines: [
-      { amplitude: 0.6, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
-      { amplitude: 0.4, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, label: "H13CO+", transition: "J=1-0" },
-      { amplitude: 1.0, center: 87.316898, sigma: 0.2, tau: 0.6, knownLine: true, label: "C2H", transition: "N=1-0" },
-      { amplitude: 2.0, center: 88.631847, sigma: 0.15, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 1.8, center: 89.188523, sigma: 0.14, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
-      { amplitude: 1.2, center: 90.663568, sigma: 0.18, tau: 1.0, knownLine: true, label: "HNC", transition: "J=1-0" },
-      { amplitude: 2.9, center: 93.173764, sigma: 0.3, tau: 8.0, knownLine: true, label: "N2H+", transition: "J=1-0" },
+      { amplitude: 0.19, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
+      { amplitude: 0.13, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, label: "H13CO+", transition: "J=1-0" },
+      { amplitude: 0.31, center: 87.316898, sigma: 0.2, tau: 0.6, knownLine: true, label: "C2H", transition: "N=1-0" },
+      { amplitude: 0.63, center: 88.631847, sigma: 0.15, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 0.56, center: 89.188523, sigma: 0.14, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 0.38, center: 90.663568, sigma: 0.18, tau: 1.0, knownLine: true, label: "HNC", transition: "J=1-0" },
+      { amplitude: 0.91, center: 93.173764, sigma: 0.3, tau: 8.0, knownLine: true, label: "N2H+", transition: "J=1-0" },
     ],
   },
   {
@@ -1092,13 +1207,13 @@ const LEVELS = [
     axis: "nm",
     sonify: "ratio",
     blurb:
-      "Fraunhofer's own spectrum on a gently sloping continuum. First lock the continuum and the amber atmospheric O₂ lines (telluric — made by Earth's air, not the Sun), then fit the solar lines. Two blended features split apart in Levels 11 and 12.",
+      "Fraunhofer's own spectrum, normalised at the middle of the band. The continuum is not a free shape: its curvature is the Sun's surface temperature, and its slope is the amount of air the light crossed, which reddens the blue end. Set both, fit the amber atmospheric O₂ lines (telluric — made by Earth's air, not the Sun), then fit the solar lines.",
     xMin: 380,
     xMax: 700,
     noiseLevel: 0.012,
     baseline: 1.0,
-    continuum: { type: "poly", c0: 1.02, c1: -0.12, c2: -0.06 },
-    continuumLockPercent: 14,
+    continuum: { type: "solar", temperatureK: SUN_TEFF_K, airmass: 1.15 },
+    continuumLockPercent: 9,
     errorThresholdPercent: 0.25,
     showSpectrumColors: true,
     trueLines: [
@@ -1170,13 +1285,13 @@ const LEVELS = [
     axis: "GHz",
     sonify: "ratio",
     blurb:
-      "A rising dust continuum under a handful of 3 mm lines — like a cut of a HEXOS-style scan. Lock the continuum first (Phase 1), then fit the molecular lines on what remains. The residual view helps once the baseline is locked.",
+      "A rising dust continuum under a handful of 3 mm lines — like a cut of a HEXOS-style scan. The continuum is pinned to 0.85 K at the middle of the band, so all you fit is its spectral index α: dust emission goes as ν^α, with α = 2 + β for emissivity index β. Lock it first (Phase 1), then fit the molecular lines on what remains.",
     xMin: 88,
     xMax: 116,
     noiseLevel: 0.05,
     baseline: 0.6,
-    continuum: { type: "poly", c0: 0.85, c1: 0.5, c2: 0.15 },
-    continuumLockPercent: 11,
+    continuum: { type: "powerLaw", refBrightnessK: 0.85, index: 4.0 },
+    continuumLockPercent: 9,
     errorThresholdPercent: 0.25,
     allowLogY: true,
     trueLines: [
@@ -1205,24 +1320,39 @@ function maxComponentsForLevel(level) {
   return lines + 2;
 }
 
-/** Slider ranges follow the level, so a 0.1-deep Fraunhofer line and a 4 K CO peak both work. */
+/**
+ * Slider ranges follow the level, so a Fraunhofer line 10 % deep and a 4 K CO peak both work.
+ * In absorption the depth is a fraction of the continuum, so its range is simply 0–100 %.
+ * The narrowest allowed width is the spectrograph's own resolution: no instrument can show a
+ * line sharper than that, so the slider does not pretend otherwise.
+ */
 function sliderRanges(level) {
   const lines = scienceLinesOf(level.trueLines);
   const amplitudes = (lines.length ? lines : level.trueLines).map((l) => l.amplitude);
   const sigmas = (lines.length ? lines : level.trueLines).map((l) => l.sigma);
   const range = level.xMax - level.xMin;
-  const amplitudeMax = Math.max.apply(null, amplitudes) * 1.3;
-  const sigmaMin = Math.max(0.005, Math.min.apply(null, sigmas) / 4);
+  const absorb = isAbsorption(level.mode);
+  const amplitudeMax = absorb ? 1 : Math.max.apply(null, amplitudes) * 1.3;
+  const resolution = levelResolution(level);
+  const sigmaMin = Math.max(
+    1e-4,
+    Math.min(
+      resolution ? resolution.sigma * 0.8 : Infinity,
+      Math.min.apply(null, sigmas) * 0.9
+    )
+  );
   const sigmaMax = Math.max.apply(null, sigmas) * 3;
   return {
-    amplitudeMin: Math.max(0.01, amplitudeMax / 200),
+    amplitudeMin: absorb ? 0.005 : Math.max(0.01, amplitudeMax / 200),
     amplitudeMax,
-    amplitudeStep: amplitudeMax / 200,
+    amplitudeStep: amplitudeMax / 500,
+    amplitudeFineStep: amplitudeMax / 2500,
     sigmaMin,
     sigmaMax,
-    sigmaStep: (sigmaMax - sigmaMin) / 200,
-    centerStep: range / 500,
-    centerFineStep: range / 50000,
+    sigmaStep: (sigmaMax - sigmaMin) / 500,
+    sigmaFineStep: (sigmaMax - sigmaMin) / 2500,
+    centerStep: range / 1500,
+    centerFineStep: range / 150000,
   };
 }
 
@@ -1237,6 +1367,52 @@ function componentDefaults(level) {
     sigma: mid(sigmas) || 0.3,
     tau: 0.5,
   };
+}
+
+/** What the strength parameter of a line physically is on this level, and how to print it. */
+function amplitudeMeta(level) {
+  if (isAbsorption(level.mode)) {
+    return {
+      label: "Line depth",
+      hint: "fraction of the continuum swallowed at line centre",
+      format: (v) => (v * 100).toFixed(1) + " % of continuum",
+    };
+  }
+  return {
+    label: "Peak brightness T_B",
+    hint: "brightness temperature above the continuum",
+    format: (v) => v.toFixed(2) + " K",
+  };
+}
+
+/** Width readout: what an observer would quote (FWHM) plus its Doppler equivalent. */
+function describeWidth(sigma, center, axisKey) {
+  const fwhm = sigma * FWHM_PER_SIGMA;
+  const unit = axisByKey(axisKey).unit;
+  const v = velocityWidthKms(fwhm, center);
+  return (
+    "FWHM " +
+    fwhm.toFixed(3) +
+    " " +
+    unit +
+    (Number.isFinite(v) ? " · " + v.toFixed(v < 10 ? 1 : 0) + " km/s" : "")
+  );
+}
+
+/** One-line description of the spectrograph a level stands for. */
+function describeResolution(level) {
+  const res = levelResolution(level);
+  if (!res) return "";
+  const unit = axisOf(level).unit;
+  return (
+    "Resolution: FWHM ≈ " +
+    res.fwhm.toFixed(3) +
+    " " +
+    unit +
+    (Number.isFinite(res.resolvingPower)
+      ? " (R ≈ " + Math.round(res.resolvingPower) + ")"
+      : "")
+  );
 }
 
 function describeTau(tau) {
@@ -1290,6 +1466,88 @@ function wavelengthToRgb(nm) {
 }
 
 // ——— Shared UI bits ———
+
+/**
+ * One parameter: its name, its value with a unit, a coarse slider, and a nudge button on each
+ * side for fine tuning. Every slider in the game uses this, so no parameter needs a number box
+ * of its own and all of them can be tuned to the last digit.
+ */
+function ParamSlider(props) {
+  const {
+    label,
+    display,
+    note,
+    min,
+    max,
+    step,
+    fineStep,
+    value,
+    sliderValue,
+    disabled,
+    onChange,
+    onSliderChange,
+    onNudge,
+  } = props;
+  const nudge = (delta) => {
+    if (disabled) return;
+    if (onNudge) onNudge(delta);
+    else onChange(Math.min(max, Math.max(min, value + delta)));
+  };
+  return React.createElement(
+    "div",
+    { className: "slider-group" },
+    React.createElement(
+      "div",
+      { className: "slider-label" },
+      React.createElement("span", null, label),
+      React.createElement("span", { className: "value" }, display)
+    ),
+    React.createElement(
+      "div",
+      { className: "slider-row" },
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "nudge-button",
+          disabled: !!disabled,
+          onClick: () => nudge(-fineStep),
+          "aria-label": "Decrease " + label + " by one fine step",
+          title: "Fine step down",
+        },
+        "−"
+      ),
+      React.createElement("input", {
+        type: "range",
+        className: "slider-input",
+        min,
+        max,
+        step,
+        value: sliderValue != null ? sliderValue : value,
+        disabled: !!disabled,
+        onChange: (e) => {
+          const v = parseFloat(e.target.value);
+          if (!isFinite(v)) return;
+          if (onSliderChange) onSliderChange(v);
+          else onChange(v);
+        },
+      }),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "nudge-button",
+          disabled: !!disabled,
+          onClick: () => nudge(fineStep),
+          "aria-label": "Increase " + label + " by one fine step",
+          title: "Fine step up",
+        },
+        "+"
+      )
+    ),
+    note ? React.createElement("div", { className: "param-note" }, note) : null
+  );
+}
 
 function CdmsLearnMore(props) {
   const solar = props && props.solar;
@@ -1546,21 +1804,21 @@ function AttractScreen(props) {
       React.createElement(
         "ul",
         { className: "attract-howto" },
-        React.createElement("li", null, "Add one component for each spectral line you can see."),
+        React.createElement("li", null, "Add one line for each spectral feature you can see."),
         React.createElement(
           "li",
           null,
-          "On continuum levels: first fit and lock the baseline (and amber atmospheric lines on the solar spectrum), then fit the science lines."
+          "On continuum levels: first fit and lock the baseline (solar temperature and airmass on the solar spectrum; dust spectral index on radio continuum), then fit the science lines."
         ),
         React.createElement(
           "li",
           null,
-          "Tune peak, position, width and optical depth until the green model matches the blue data."
+          "Tune brightness or depth, position, width and optical depth until the green model matches the blue data. Use the (−)/(+) buttons for fine steps."
         ),
         React.createElement(
           "li",
           null,
-          "Radio levels show bright emission lines; the solar levels show dark Fraunhofer absorption lines."
+          "Radio levels show bright emission lines in kelvin; the solar levels show dark Fraunhofer absorption as a fraction of the continuum."
         ),
         React.createElement("li", null, "Submit your fit — pass when every line on the plot is close enough."),
         React.createElement("li", null, "Then hear your fitted lines as audible tones.")
@@ -1633,6 +1891,160 @@ const COMPONENT_COLORS = [
   "rgba(187, 247, 208, 0.9)",
 ];
 
+/** Colour follows the line's own number, so adding or removing one never recolours the rest. */
+function componentColor(component) {
+  const n = component && component.id ? component.id - 1 : 0;
+  return COMPONENT_COLORS[n % COMPONENT_COLORS.length];
+}
+
+/**
+ * Level status in one strip under the plot: the numbers as pills, the wordy parts behind a
+ * toggle. This replaces the old "HUD" panel, which took a whole column of screen space and was
+ * named after fighter-jet jargon nobody had explained.
+ */
+function LevelInfoStrip(props) {
+  const {
+    level,
+    axis,
+    absorb,
+    needsBaseline,
+    baselineLocked,
+    maxComponents,
+    lineCount,
+    resolutionText,
+    completionSummary,
+  } = props;
+  return React.createElement(
+    "div",
+    { className: "level-info-strip" },
+    React.createElement(
+      "div",
+      { className: "info-pills" },
+      React.createElement("div", { className: "metric-pill" }, "Lines drawn: ", lineCount),
+      React.createElement(
+        "div",
+        { className: "metric-pill" },
+        "Lines you may fit: ",
+        maxComponents
+      ),
+      React.createElement(
+        "div",
+        { className: "metric-pill" },
+        "Pass within ",
+        level.errorThresholdPercent,
+        " % in ",
+        axis.unit
+      ),
+      resolutionText
+        ? React.createElement("div", { className: "metric-pill" }, resolutionText)
+        : null,
+      needsBaseline
+        ? React.createElement(
+            "div",
+            { className: "metric-pill" },
+            baselineLocked ? "Baseline locked" : "Baseline open"
+          )
+        : null
+    ),
+    React.createElement(
+      "details",
+      { className: "info-details" },
+      React.createElement("summary", null, "What do these numbers mean?"),
+      React.createElement(
+        "p",
+        { className: "info-status" },
+        axis.key === "nm"
+          ? "Wavelengths are real solar Fraunhofer lines. A line's strength is its depth as a fraction of the continuum behind it, so it means the same thing wherever the continuum happens to sit."
+          : "Frequencies are real astronomical lines (CDMS). A line's strength is a brightness temperature in kelvin, measured above the continuum."
+      ),
+      React.createElement(
+        "p",
+        { className: "info-status" },
+        "Optical depth τ₀ shapes each line: small τ₀ gives a Gaussian, large τ₀ saturates it into a flat ",
+        absorb ? "dark core" : "top",
+        "."
+      ),
+      React.createElement(
+        "p",
+        { className: "info-status" },
+        "The widths belong to the spectrograph, not to the gas — nothing can look sharper than the instrument's resolution. That is why one dark Mg b feature here splits into a triplet in the close-up level."
+      ),
+      completionSummary
+        ? React.createElement(
+            "table",
+            { className: "lines-table" },
+            React.createElement(
+              "thead",
+              null,
+              React.createElement(
+                "tr",
+                null,
+                React.createElement("th", null, "True (" + axis.unit + ")"),
+                React.createElement("th", null, axis.key === "nm" ? "Element" : "Molecule"),
+                React.createElement("th", null, "Fitted (" + axis.unit + ")"),
+                React.createElement("th", { className: "error-cell" }, "Error %")
+              )
+            ),
+            React.createElement(
+              "tbody",
+              null,
+              completionSummary.lineErrors.map((le, idx) => {
+                const fitted = le.matchedGaussian ? le.matchedGaussian.center : null;
+                const closest = findClosestCatalogLine(fitted, axis.key);
+                const tolerance = (level.xMax - level.xMin) * 0.02;
+                return React.createElement(
+                  "tr",
+                  { key: idx },
+                  React.createElement("td", null, formatAxisValue(le.line.center, axis.key)),
+                  React.createElement(
+                    "td",
+                    null,
+                    le.line.knownLine
+                      ? le.line.transition
+                        ? le.line.label + " " + le.line.transition
+                        : le.line.label || "Known"
+                      : React.createElement("span", { className: "unknown-label" }, "Unknown line")
+                  ),
+                  React.createElement(
+                    "td",
+                    null,
+                    fitted != null
+                      ? React.createElement(
+                          "span",
+                          null,
+                          formatAxisValue(fitted, axis.key),
+                          closest && Math.abs(closest.value - fitted) < tolerance
+                            ? React.createElement(
+                                "span",
+                                { style: { marginLeft: 6, opacity: 0.85, fontSize: "0.75rem" } },
+                                "→ ",
+                                closest.species
+                              )
+                            : null
+                        )
+                      : "—"
+                  ),
+                  React.createElement(
+                    "td",
+                    { className: "error-cell" },
+                    le.percentError == null ? "—" : le.percentError.toFixed(2)
+                  )
+                );
+              })
+            )
+          )
+        : null,
+      completionSummary && completionSummary.extraLineCount > 0
+        ? React.createElement(
+            "p",
+            { className: "info-status info-bonus" },
+            describeBonusLines(completionSummary)
+          )
+        : null
+    )
+  );
+}
+
 function SpectrumGameView(props) {
   const { level, onCompletion } = props;
   const axis = axisOf(level);
@@ -1677,6 +2089,7 @@ function SpectrumGameView(props) {
   const [showResidual, setShowResidual] = React.useState(false);
   const [logY, setLogY] = React.useState(false);
   const [chartCanvas, setChartCanvas] = React.useState(null);
+  const componentListRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const chartSignatureRef = React.useRef("");
   const clickHandlerRef = React.useRef(() => {});
@@ -1783,21 +2196,30 @@ function SpectrumGameView(props) {
       }
       return false;
     };
-    /** Observed/model minus locked continuum+tellurics — keeps absorption as dips below ~0. */
-    const residualFromBaseline = (ys) => ys.map((v, i) => v - baselineModelY[i]);
-    /** Line shape alone, relative to residual zero (no continuum). */
-    const residualComponentY = (xs, component) => {
-      const contribution = evaluateLineProfile(xs, component);
-      return absorb ? contribution.map((v) => -v) : contribution.slice();
-    };
+    /**
+     * Emission subtracts the baseline, so lines stand above zero. Absorption divides by it —
+     * what an observer calls rectifying: the continuum flattens to 1 and each line dips to
+     * 1 − depth, so its depth can be read straight off the axis.
+     */
+    const residualFromBaseline = (ys) =>
+      absorb
+        ? ys.map((v, i) => (baselineModelY[i] > 0 ? v / baselineModelY[i] : NaN))
+        : ys.map((v, i) => v - baselineModelY[i]);
+    /** One line on its own against the rectified (or subtracted) zero point. */
+    const residualComponentY = (xs, component) =>
+      absorb ? lineTransmission(xs, component) : evaluateLineProfile(xs, component);
     const residualView = showResidual && baselineLocked;
     let observedY = spectrum.y;
     let observedLabel = absorb ? "Observed spectrum (absorption)" : "Observed spectrum";
     if (residualView) {
       observedY = residualFromBaseline(spectrum.y);
-      observedLabel = telluricTruth.length
-        ? "Residual (continuum & atmosphere subtracted)"
-        : "Residual (continuum subtracted)";
+      observedLabel = absorb
+        ? telluricTruth.length
+          ? "Rectified (divided by continuum & atmosphere)"
+          : "Rectified (divided by the continuum)"
+        : telluricTruth.length
+          ? "Residual (continuum & atmosphere subtracted)"
+          : "Residual (continuum subtracted)";
     }
     // Amber telluric overlay only on the raw spectrum; residual has those dips removed.
     const hasTellurics = telluricTruth.length > 0 && !residualView;
@@ -1867,9 +2289,9 @@ function SpectrumGameView(props) {
       });
     }
     if (phase === "lines" || baselineLocked || !needsBaseline) {
-      components.forEach((component, idx) => {
+      components.forEach((component) => {
         datasets.push({
-          label: "Component " + (idx + 1),
+          label: "Line " + component.id,
           data: toPoints(
             coarseX,
             residualView
@@ -1883,7 +2305,7 @@ function SpectrumGameView(props) {
                   level.xMax
                 )
           ),
-          borderColor: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
+          borderColor: componentColor(component),
           borderWidth: component.id === selectedId ? 2 : 1,
           borderDash: [4, 3],
           pointRadius: 0,
@@ -1960,11 +2382,11 @@ function SpectrumGameView(props) {
                 display: true,
                 text: showResidual && baselineLocked
                   ? absorb
-                    ? "Residual (absorption dips)"
-                    : "Residual intensity"
+                    ? "Rectified intensity (continuum = 1)"
+                    : "Residual brightness (K)"
                   : absorb
-                    ? "Intensity (against continuum)"
-                    : "Intensity",
+                    ? "Intensity (continuum normalised)"
+                    : "Brightness temperature (K)",
                 color: "#e5e5ff",
               },
             },
@@ -2021,8 +2443,11 @@ function SpectrumGameView(props) {
         role: "science",
       };
       setSelectedId(nextId);
-      return prev.concat([next]);
+      // Newest first: with a long list the bottom is off screen, so appending looked like nothing
+      // had happened.
+      return [next].concat(prev);
     });
+    if (componentListRef.current) componentListRef.current.scrollTop = 0;
   }
 
   function handleRemoveComponent(id) {
@@ -2043,27 +2468,6 @@ function SpectrumGameView(props) {
     if (baselineLocked) return;
     setTelluricComponents((prev) =>
       prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
-    );
-  }
-
-  function handleNudgeCenter(id, delta) {
-    setComponents((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? { ...c, center: Math.min(level.xMax, Math.max(level.xMin, c.center + delta)) }
-          : c
-      )
-    );
-  }
-
-  function handleNudgeTelluric(id, delta) {
-    if (baselineLocked) return;
-    setTelluricComponents((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? { ...c, center: Math.min(level.xMax, Math.max(level.xMin, c.center + delta)) }
-          : c
-      )
     );
   }
 
@@ -2165,6 +2569,7 @@ function SpectrumGameView(props) {
       sonification,
       passed,
       baselineLocked: !needsBaseline || baselineLocked,
+      continuumResults: continuumResults(continuumFit, trueContinuum),
     };
     setCompletionSummary(summary);
     setCompleted(passed);
@@ -2172,14 +2577,15 @@ function SpectrumGameView(props) {
   }
 
   const fitQuality = describeFitQuality(fitPct);
-  const amplitudeLabel = absorb ? "Peak depth" : "Peak height";
+  const amplitudeInfo = amplitudeMeta(level);
+  const resolutionText = describeResolution(level);
 
   return React.createElement(
     "div",
     { className: "game-layout" },
     React.createElement(
       "div",
-      { className: "panel" },
+      { className: "panel plot-panel" },
       React.createElement(
         "div",
         { className: "plot-header" },
@@ -2210,7 +2616,11 @@ function SpectrumGameView(props) {
                 onClick: () => setShowResidual((v) => !v),
                 "aria-pressed": showResidual,
               },
-              showResidual ? "Show raw spectrum" : "Show residual"
+              showResidual
+                ? "Show raw spectrum"
+                : absorb
+                  ? "Rectify (÷ continuum)"
+                  : "Show residual"
             ),
           level.allowLogY &&
             React.createElement(
@@ -2256,11 +2666,13 @@ function SpectrumGameView(props) {
             ", then Lock baseline. Science lines stay locked until then."
           : telluricTruth.length
             ? showResidual
-              ? "Residual: continuum and amber atmosphere removed — solar lines stay as absorption dips around zero. Click the plot to place the selected component."
-              : "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected component."
+              ? "Rectified: divided by your continuum and amber atmosphere, so the continuum is a flat 1 and every solar line dips to 1 minus its depth. Click the plot to place the selected line."
+              : "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected line."
             : showResidual
-              ? "Residual: continuum subtracted — emission stays above zero, absorption stays as dips. Click the plot to place the selected component."
-              : "Click the plot to move the selected component there. Every drawn science line can be fitted — weak ones may not decide the pass."
+              ? absorb
+                ? "Rectified: divided by your continuum, so line depths read straight off the axis. Click the plot to place the selected line."
+                : "Residual: continuum subtracted, so the lines stand alone above zero. Click the plot to place the selected line."
+              : "Click the plot to move the selected line there. Every drawn science line can be fitted — weak ones may not decide the pass."
       ),
       completed &&
         React.createElement(
@@ -2271,7 +2683,18 @@ function SpectrumGameView(props) {
           "% in ",
           axis.key === "nm" ? "wavelength" : "center frequency",
           "."
-        )
+        ),
+      React.createElement(LevelInfoStrip, {
+        level,
+        axis,
+        absorb,
+        needsBaseline,
+        baselineLocked,
+        maxComponents,
+        lineCount: gradedScience.length + gradedTellurics.length,
+        resolutionText,
+        completionSummary,
+      })
     ),
     React.createElement(
       "div",
@@ -2355,216 +2778,55 @@ function SpectrumGameView(props) {
                 )
             )
           ),
-          continuumFit.type === "poly" &&
+          React.createElement(
+            "p",
+            { className: "param-note" },
+            "The continuum is normalised: it is fixed at ",
+            continuumFit.type === "powerLaw"
+              ? (trueContinuum.refBrightnessK || 1).toFixed(2) + " K"
+              : "1.00",
+            " at ",
+            formatAxisValue(continuumRefX(level.xMin, level.xMax), axis.key),
+            " ",
+            axis.unit,
+            ", the middle of the band. There is no brightness to fit — only the physics of its shape."
+          ),
+          continuumFit.type === "solar" &&
             React.createElement(
               "div",
               { className: "continuum-controls" },
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Continuum level c₀"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    continuumFit.c0.toFixed(3)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: 0,
-                  max: Math.max(2.5, trueContinuum.c0 * 1.8),
-                  step: 0.01,
-                  value: continuumFit.c0,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      c0: parseFloat(e.target.value),
-                    })),
-                })
-              ),
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Slope c₁"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    continuumFit.c1.toFixed(3)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: -1.5,
-                  max: 1.5,
-                  step: 0.01,
-                  value: continuumFit.c1,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      c1: parseFloat(e.target.value),
-                    })),
-                })
-              ),
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Curvature c₂"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    (continuumFit.c2 || 0).toFixed(3)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: -1,
-                  max: 1,
-                  step: 0.01,
-                  value: continuumFit.c2 || 0,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      c2: parseFloat(e.target.value),
-                    })),
-                })
-              )
+              React.createElement(ParamSlider, {
+                label: "Solar surface temperature",
+                display: Math.round(continuumFit.temperatureK) + " K",
+                note: "Planck curve: hotter shifts the peak to the blue (Wien)",
+                min: 4000,
+                max: 8000,
+                step: 5,
+                fineStep: 1,
+                value: continuumFit.temperatureK,
+                disabled: baselineLocked,
+                onChange: (v) =>
+                  setContinuumFit((prev) => ({ ...prev, temperatureK: v })),
+              })
             ),
-          continuumFit.type === "wideGaussian" &&
+          continuumFit.type === "powerLaw" &&
             React.createElement(
               "div",
               { className: "continuum-controls" },
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Wide continuum amplitude"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    continuumFit.amplitude.toFixed(2)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: 0,
-                  max: Math.max(4, continuumFit.amplitude * 2),
-                  step: 0.02,
-                  value: continuumFit.amplitude,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      amplitude: parseFloat(e.target.value),
-                    })),
-                })
-              ),
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Wide continuum center"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    formatAxisValue(continuumFit.center, axis.key)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: level.xMin,
-                  max: level.xMax,
-                  step: ranges.centerStep,
-                  value: continuumFit.center,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      center: parseFloat(e.target.value),
-                    })),
-                })
-              ),
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Wide continuum sigma"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    continuumFit.sigma.toFixed(2)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: (level.xMax - level.xMin) / 20,
-                  max: (level.xMax - level.xMin) * 2,
-                  step: (level.xMax - level.xMin) / 200,
-                  value: continuumFit.sigma,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      sigma: parseFloat(e.target.value),
-                    })),
-                })
-              )
-            ),
-          continuumFit.type === "flat" &&
-            React.createElement(
-              "div",
-              { className: "continuum-controls" },
-              React.createElement(
-                "div",
-                { className: "slider-group" },
-                React.createElement(
-                  "div",
-                  { className: "slider-label" },
-                  React.createElement("span", null, "Continuum level"),
-                  React.createElement(
-                    "span",
-                    { className: "value" },
-                    continuumFit.c0.toFixed(3)
-                  )
-                ),
-                React.createElement("input", {
-                  type: "range",
-                  min: 0,
-                  max: Math.max(2.5, continuumFit.c0 * 2),
-                  step: 0.01,
-                  value: continuumFit.c0,
-                  className: "slider-input",
-                  disabled: baselineLocked,
-                  onChange: (e) =>
-                    setContinuumFit((prev) => ({
-                      ...prev,
-                      c0: parseFloat(e.target.value),
-                    })),
-                })
-              )
+              React.createElement(ParamSlider, {
+                label: "Dust spectral index α",
+                display: continuumFit.index.toFixed(2),
+                note:
+                  "Dust emission goes as ν^α, so α = 2 + β for emissivity index β = " +
+                  (continuumFit.index - 2).toFixed(2),
+                min: 0,
+                max: 5,
+                step: 0.02,
+                fineStep: 0.005,
+                value: continuumFit.index,
+                disabled: baselineLocked,
+                onChange: (v) => setContinuumFit((prev) => ({ ...prev, index: v })),
+              })
             ),
           telluricComponents.length > 0 &&
             React.createElement(
@@ -2577,162 +2839,90 @@ function SpectrumGameView(props) {
                   className: "component-swatch",
                   style: { background: TELLURIC_COLOR },
                 }),
-                "Atmosphere (telluric) — amber in the spectrum; subtract before the solar lines"
+                "Atmosphere (telluric) — amber in the spectrum; Earth's air, not the Sun"
               ),
-              telluricComponents.map((component, idx) =>
-                React.createElement(
-                  "div",
-                  {
-                    key: component.id,
-                    className:
-                      "gaussian-row telluric-row" +
-                      (component.id === selectedTelluricId ? " gaussian-row-selected" : ""),
-                    onClick: () => {
-                      if (!baselineLocked) setSelectedTelluricId(component.id);
+              continuumFit.type === "solar" &&
+                React.createElement(ParamSlider, {
+                  label: "Telluric reddening — airmass",
+                  display: continuumFit.airmass.toFixed(3) + " airmasses",
+                  note:
+                    "Rayleigh scattering goes as λ⁻⁴, so more air means a redder Sun: τ(" +
+                    RAYLEIGH_REF_NM +
+                    " nm) = " +
+                    (RAYLEIGH_TAU_550 * continuumFit.airmass).toFixed(3),
+                  min: 1,
+                  max: 3,
+                  step: 0.01,
+                  fineStep: 0.001,
+                  value: continuumFit.airmass,
+                  disabled: baselineLocked,
+                  onChange: (v) => setContinuumFit((prev) => ({ ...prev, airmass: v })),
+                }),
+              React.createElement(
+                "div",
+                { className: "component-grid" },
+                telluricComponents.map((component, idx) =>
+                  React.createElement(
+                    "div",
+                    {
+                      key: component.id,
+                      className:
+                        "gaussian-row telluric-row" +
+                        (component.id === selectedTelluricId ? " gaussian-row-selected" : ""),
+                      onClick: () => {
+                        if (!baselineLocked) setSelectedTelluricId(component.id);
+                      },
                     },
-                  },
-                  React.createElement(
-                    "div",
-                    { className: "gaussian-row-header" },
-                    React.createElement(
-                      "span",
-                      null,
-                      React.createElement("span", {
-                        className: "component-swatch",
-                        style: { background: TELLURIC_COLOR },
-                      }),
-                      "Atmosphere ",
-                      idx + 1,
-                      telluricTruth[idx]
-                        ? " · " + lineSpeciesLabel(telluricTruth[idx])
-                        : ""
-                    )
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
                     React.createElement(
                       "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, "Depth"),
+                      { className: "gaussian-row-header" },
                       React.createElement(
                         "span",
-                        { className: "value" },
-                        component.amplitude.toFixed(2)
+                        null,
+                        React.createElement("span", {
+                          className: "component-swatch",
+                          style: { background: TELLURIC_COLOR },
+                        }),
+                        "Atmosphere ",
+                        idx + 1,
+                        telluricTruth[idx]
+                          ? " · " + lineSpeciesLabel(telluricTruth[idx])
+                          : ""
                       )
                     ),
-                    React.createElement("input", {
-                      type: "range",
+                    React.createElement(ParamSlider, {
+                      label: amplitudeInfo.label,
+                      display: amplitudeInfo.format(component.amplitude),
                       min: ranges.amplitudeMin,
                       max: ranges.amplitudeMax,
                       step: ranges.amplitudeStep,
+                      fineStep: ranges.amplitudeFineStep,
                       value: component.amplitude,
-                      className: "slider-input",
                       disabled: baselineLocked,
-                      onChange: (e) =>
-                        handleUpdateTelluric(
-                          component.id,
-                          "amplitude",
-                          parseFloat(e.target.value)
-                        ),
-                    })
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, axis.centerLabel),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        formatAxisValue(component.center, axis.key)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
+                      onChange: (v) => handleUpdateTelluric(component.id, "amplitude", v),
+                    }),
+                    React.createElement(ParamSlider, {
+                      label: axis.centerLabel,
+                      display: formatAxisValue(component.center, axis.key) + " " + axis.unit,
                       min: level.xMin,
                       max: level.xMax,
                       step: ranges.centerStep,
+                      fineStep: ranges.centerFineStep,
                       value: component.center,
-                      className: "slider-input",
                       disabled: baselineLocked,
-                      onChange: (e) =>
-                        handleUpdateTelluric(
-                          component.id,
-                          "center",
-                          parseFloat(e.target.value)
-                        ),
+                      onChange: (v) => handleUpdateTelluric(component.id, "center", v),
                     }),
-                    React.createElement(
-                      "div",
-                      { className: "fine-row" },
-                      React.createElement(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button tiny-button",
-                          disabled: baselineLocked,
-                          onClick: () =>
-                            handleNudgeTelluric(component.id, -ranges.centerFineStep),
-                        },
-                        "−"
-                      ),
-                      React.createElement("input", {
-                        type: "number",
-                        className: "fine-input",
-                        min: level.xMin,
-                        max: level.xMax,
-                        step: ranges.centerFineStep,
-                        value: component.center,
-                        disabled: baselineLocked,
-                        onChange: (e) => {
-                          const v = parseFloat(e.target.value);
-                          if (isFinite(v)) handleUpdateTelluric(component.id, "center", v);
-                        },
-                      }),
-                      React.createElement(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button tiny-button",
-                          disabled: baselineLocked,
-                          onClick: () =>
-                            handleNudgeTelluric(component.id, ranges.centerFineStep),
-                        },
-                        "+"
-                      ),
-                      React.createElement("span", { className: "fine-unit" }, axis.unit)
-                    )
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, "Width (sigma)"),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        component.sigma.toFixed(3)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
+                    React.createElement(ParamSlider, {
+                      label: "Width σ",
+                      display: component.sigma.toFixed(3) + " " + axis.unit,
+                      note: describeWidth(component.sigma, component.center, axis.key),
                       min: ranges.sigmaMin,
                       max: ranges.sigmaMax,
                       step: ranges.sigmaStep,
+                      fineStep: ranges.sigmaFineStep,
                       value: component.sigma,
-                      className: "slider-input",
                       disabled: baselineLocked,
-                      onChange: (e) =>
-                        handleUpdateTelluric(
-                          component.id,
-                          "sigma",
-                          parseFloat(e.target.value)
-                        ),
+                      onChange: (v) => handleUpdateTelluric(component.id, "sigma", v),
                     })
                   )
                 )
@@ -2752,7 +2942,7 @@ function SpectrumGameView(props) {
               React.createElement(
                 "span",
                 { className: "panel-title" },
-                needsBaseline ? "Fit science lines" : "Line components"
+                needsBaseline ? "Fit science lines" : "Model lines"
               ),
               React.createElement(
                 "div",
@@ -2760,7 +2950,7 @@ function SpectrumGameView(props) {
                 React.createElement(
                   "span",
                   { className: "count-label" },
-                  "Count: ",
+                  "Lines: ",
                   components.length,
                   " / ",
                   maxComponents
@@ -2774,8 +2964,9 @@ function SpectrumGameView(props) {
                     disabled:
                       components.length >= maxComponents ||
                       (needsBaseline && !baselineLocked),
+                    title: "Add a new line at the top of the list",
                   },
-                  "+ Component"
+                  "+ Add line"
                 )
               )
             ),
@@ -2788,8 +2979,8 @@ function SpectrumGameView(props) {
               ),
             React.createElement(
               "div",
-              { className: "component-list" },
-              components.map((component, idx) =>
+              { className: "component-list component-grid", ref: componentListRef },
+              components.map((component) =>
                 React.createElement(
                   "div",
                   {
@@ -2809,12 +3000,10 @@ function SpectrumGameView(props) {
                       null,
                       React.createElement("span", {
                         className: "component-swatch",
-                        style: {
-                          background: COMPONENT_COLORS[idx % COMPONENT_COLORS.length],
-                        },
+                        style: { background: componentColor(component) },
                       }),
-                      "Component ",
-                      idx + 1,
+                      "Line ",
+                      component.id,
                       component.id === selectedId
                         ? React.createElement("span", { className: "selected-tag" }, "selected")
                         : null
@@ -2824,168 +3013,71 @@ function SpectrumGameView(props) {
                         "button",
                         {
                           type: "button",
-                          className: "secondary-button tiny-button",
+                          className: "secondary-button tiny-button remove-line-button",
+                          title: "Take line " + component.id + " out of your model",
                           onClick: (e) => {
                             e.stopPropagation();
                             handleRemoveComponent(component.id);
                           },
                         },
-                        "Remove"
+                        "− Remove line ",
+                        component.id
                       )
                   ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, amplitudeLabel),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        component.amplitude.toFixed(2)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
-                      min: ranges.amplitudeMin,
-                      max: ranges.amplitudeMax,
-                      step: ranges.amplitudeStep,
-                      value: component.amplitude,
-                      className: "slider-input",
-                      onChange: (e) =>
-                        handleUpdateComponent(
-                          component.id,
-                          "amplitude",
-                          parseFloat(e.target.value)
-                        ),
-                    })
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, axis.centerLabel),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        formatAxisValue(component.center, axis.key)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
-                      min: level.xMin,
-                      max: level.xMax,
-                      step: ranges.centerStep,
-                      value: component.center,
-                      className: "slider-input",
-                      onChange: (e) =>
-                        handleUpdateComponent(
-                          component.id,
-                          "center",
-                          parseFloat(e.target.value)
-                        ),
-                    }),
-                    React.createElement(
-                      "div",
-                      { className: "fine-row" },
-                      React.createElement(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button tiny-button",
-                          onClick: () =>
-                            handleNudgeCenter(component.id, -ranges.centerFineStep),
-                          "aria-label": "Nudge center down",
-                        },
-                        "−"
+                  React.createElement(ParamSlider, {
+                    label: amplitudeInfo.label,
+                    display: amplitudeInfo.format(component.amplitude),
+                    note: amplitudeInfo.hint,
+                    min: ranges.amplitudeMin,
+                    max: ranges.amplitudeMax,
+                    step: ranges.amplitudeStep,
+                    fineStep: ranges.amplitudeFineStep,
+                    value: component.amplitude,
+                    onChange: (v) => handleUpdateComponent(component.id, "amplitude", v),
+                  }),
+                  React.createElement(ParamSlider, {
+                    label: axis.centerLabel,
+                    display: formatAxisValue(component.center, axis.key) + " " + axis.unit,
+                    min: level.xMin,
+                    max: level.xMax,
+                    step: ranges.centerStep,
+                    fineStep: ranges.centerFineStep,
+                    value: component.center,
+                    onChange: (v) => handleUpdateComponent(component.id, "center", v),
+                  }),
+                  React.createElement(ParamSlider, {
+                    label: "Width σ",
+                    display: component.sigma.toFixed(3) + " " + axis.unit,
+                    note: describeWidth(component.sigma, component.center, axis.key),
+                    min: ranges.sigmaMin,
+                    max: ranges.sigmaMax,
+                    step: ranges.sigmaStep,
+                    fineStep: ranges.sigmaFineStep,
+                    value: component.sigma,
+                    onChange: (v) => handleUpdateComponent(component.id, "sigma", v),
+                  }),
+                  React.createElement(ParamSlider, {
+                    label: "Line-centre optical depth τ₀",
+                    display: component.tau.toFixed(2) + " — " + describeTau(component.tau),
+                    note:
+                      "dimensionless; thin gives a Gaussian, thick a flat saturated " +
+                      (absorb ? "core" : "top"),
+                    min: 0,
+                    max: 1000,
+                    step: 1,
+                    fineStep: 2,
+                    sliderValue: tauToSlider(component.tau),
+                    onSliderChange: (v) =>
+                      handleUpdateComponent(component.id, "tau", sliderToTau(v)),
+                    onNudge: (d) =>
+                      handleUpdateComponent(
+                        component.id,
+                        "tau",
+                        sliderToTau(
+                          Math.min(1000, Math.max(0, tauToSlider(component.tau) + d))
+                        )
                       ),
-                      React.createElement("input", {
-                        type: "number",
-                        className: "fine-input",
-                        min: level.xMin,
-                        max: level.xMax,
-                        step: ranges.centerFineStep,
-                        value: component.center,
-                        onChange: (e) => {
-                          const v = parseFloat(e.target.value);
-                          if (isFinite(v)) handleUpdateComponent(component.id, "center", v);
-                        },
-                      }),
-                      React.createElement(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button tiny-button",
-                          onClick: () =>
-                            handleNudgeCenter(component.id, ranges.centerFineStep),
-                          "aria-label": "Nudge center up",
-                        },
-                        "+"
-                      ),
-                      React.createElement("span", { className: "fine-unit" }, axis.unit)
-                    )
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, "Width (sigma)"),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        component.sigma.toFixed(axis.key === "nm" ? 3 : 2)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
-                      min: ranges.sigmaMin,
-                      max: ranges.sigmaMax,
-                      step: ranges.sigmaStep,
-                      value: component.sigma,
-                      className: "slider-input",
-                      onChange: (e) =>
-                        handleUpdateComponent(
-                          component.id,
-                          "sigma",
-                          parseFloat(e.target.value)
-                        ),
-                    })
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "slider-group" },
-                    React.createElement(
-                      "div",
-                      { className: "slider-label" },
-                      React.createElement("span", null, "Optical depth τ"),
-                      React.createElement(
-                        "span",
-                        { className: "value" },
-                        component.tau.toFixed(2),
-                        " — ",
-                        describeTau(component.tau)
-                      )
-                    ),
-                    React.createElement("input", {
-                      type: "range",
-                      min: 0,
-                      max: 1000,
-                      step: 1,
-                      value: tauToSlider(component.tau),
-                      className: "slider-input",
-                      onChange: (e) =>
-                        handleUpdateComponent(
-                          component.id,
-                          "tau",
-                          sliderToTau(parseFloat(e.target.value))
-                        ),
-                    })
-                  )
+                  })
                 )
               )
             )
@@ -3009,131 +3101,6 @@ function SpectrumGameView(props) {
             "Submit fit"
           )
         )
-      ),
-      React.createElement(
-        "div",
-        { className: "panel" },
-        React.createElement("div", { className: "panel-title" }, "HUD"),
-        React.createElement(
-          "div",
-          { className: "hud-metrics" },
-          React.createElement(
-            "div",
-            { className: "metric-pill" },
-            "Lines: ",
-            gradedScience.length + gradedTellurics.length,
-          ),
-          needsBaseline &&
-            React.createElement(
-              "div",
-              { className: "metric-pill" },
-              baselineLocked ? "Baseline locked" : "Baseline unlocked"
-            ),
-          React.createElement("div", { className: "metric-pill" }, "Max components: ", maxComponents),
-          React.createElement(
-            "div",
-            { className: "metric-pill" },
-            "Threshold: ",
-            level.errorThresholdPercent,
-            "% in ",
-            axis.unit
-          )
-        ),
-        React.createElement(
-          "div",
-          { className: "hud-status" },
-          axis.key === "nm"
-            ? "Wavelengths are real solar Fraunhofer lines. On two-step levels, lock continuum and amber telluric O₂ first, then fit the solar lines."
-            : "Frequencies are real astronomical lines (CDMS). On continuum levels, lock the baseline first, then fit the lines."
-        ),
-        React.createElement(
-          "div",
-          { className: "hud-status" },
-          "Optical depth τ shapes each line: small τ gives a Gaussian, large τ saturates it into a flat ",
-          absorb ? "dark core" : "top",
-          "."
-        ),
-        completionSummary &&
-          React.createElement(
-            "div",
-            { style: { marginTop: 8 } },
-            React.createElement(
-              "div",
-              { style: { fontSize: "0.8rem", marginBottom: 4 } },
-              axis.key === "nm"
-                ? "Line summary — wavelengths in nm (Fraunhofer)"
-                : "Line summary — frequencies in GHz (CDMS)"
-            ),
-            React.createElement(
-              "table",
-              { className: "lines-table" },
-              React.createElement(
-                "thead",
-                null,
-                React.createElement(
-                  "tr",
-                  null,
-                  React.createElement("th", null, "True (" + axis.unit + ")"),
-                  React.createElement("th", null, axis.key === "nm" ? "Element" : "Molecule"),
-                  React.createElement("th", null, "Fitted (" + axis.unit + ")"),
-                  React.createElement("th", { className: "error-cell" }, "Error %")
-                )
-              ),
-              React.createElement(
-                "tbody",
-                null,
-                completionSummary.lineErrors.map((le, idx) => {
-                  const fitted = le.matchedGaussian ? le.matchedGaussian.center : null;
-                  const closest = findClosestCatalogLine(fitted, axis.key);
-                  const tolerance = (level.xMax - level.xMin) * 0.02;
-                  return React.createElement(
-                    "tr",
-                    { key: idx },
-                    React.createElement("td", null, formatAxisValue(le.line.center, axis.key)),
-                    React.createElement(
-                      "td",
-                      null,
-                      le.line.knownLine
-                        ? le.line.transition
-                          ? le.line.label + " " + le.line.transition
-                          : le.line.label || "Known"
-                        : React.createElement("span", { className: "unknown-label" }, "Unknown line")
-                    ),
-                    React.createElement(
-                      "td",
-                      null,
-                      fitted != null
-                        ? React.createElement(
-                            "span",
-                            null,
-                            formatAxisValue(fitted, axis.key),
-                            closest && Math.abs(closest.value - fitted) < tolerance
-                              ? React.createElement(
-                                  "span",
-                                  { style: { marginLeft: 6, opacity: 0.85, fontSize: "0.75rem" } },
-                                  "→ ",
-                                  closest.species
-                                )
-                              : null
-                          )
-                        : "—"
-                    ),
-                    React.createElement(
-                      "td",
-                      { className: "error-cell" },
-                      le.percentError == null ? "—" : le.percentError.toFixed(2)
-                    )
-                  );
-                })
-              )
-            ),
-            completionSummary.extraLineCount > 0 &&
-              React.createElement(
-                "div",
-                { className: "hud-status hud-bonus" },
-                describeBonusLines(completionSummary)
-              )
-          )
       )
     )
   );
@@ -3261,6 +3228,15 @@ function App() {
       rows.push(["Audio rule", completionModal.sonification.mode]);
       rows.push(["Audio scale factor", String(completionModal.sonification.scaleFactor)]);
     }
+    const absorbMode = completionModal.mode === "absorption";
+    const ampHeader = absorbMode ? "Depth (fraction)" : "Peak T_B (K)";
+    (completionModal.continuumResults || []).forEach((cr) => {
+      rows.push([
+        cr.label,
+        String(Number(cr.fitted).toFixed(cr.decimals)),
+        "truth " + Number(cr.truth).toFixed(cr.decimals) + (cr.unit ? " " + cr.unit : ""),
+      ]);
+    });
     rows.push([]);
     rows.push([
       "True " + unit,
@@ -3268,9 +3244,9 @@ function App() {
       "Scored",
       "Fitted " + unit,
       "Error (%)",
-      "Peak",
+      ampHeader,
       "Sigma (" + unit + ")",
-      "Optical depth",
+      "Optical depth τ₀",
       "Audible Hz",
     ]);
     const audible = (completionModal.sonification && completionModal.sonification.audibleHz) || [];
@@ -3282,7 +3258,11 @@ function App() {
         scored ? "yes" : "bonus",
         fitted ? fitted.center.toFixed(6) : "",
         le.percentError != null ? le.percentError.toFixed(4) : "",
-        fitted ? fitted.amplitude.toFixed(4) : "",
+        fitted
+          ? absorbMode
+            ? (fitted.amplitude * 100).toFixed(1) + "%"
+            : fitted.amplitude.toFixed(4)
+          : "",
         fitted ? fitted.sigma.toFixed(4) : "",
         fitted ? fitted.tau.toFixed(3) : "",
         audibleHz != null ? audibleHz.toFixed(2) : "",
@@ -3357,6 +3337,8 @@ function App() {
   const currentLevel = LEVELS[levelIndex];
   const modalLevel = completionModal ? levelById(completionModal.levelId) : null;
   const modalAxis = axisByKey(completionModal ? completionModal.axis : "GHz");
+  const modalAbsorb = completionModal && completionModal.mode === "absorption";
+  const modalAmpMeta = modalLevel ? amplitudeMeta(modalLevel) : null;
   const modalBands = modalLevel ? starBandsForLevel(modalLevel) : null;
   const knownFacts =
     completionModal && completionModal.lineErrors
@@ -3538,6 +3520,36 @@ function App() {
             modalBands ? modalBands[0].toPrecision(2) : "0.05",
             "% — keep refining for the leaderboard!"
           ),
+          completionModal.continuumResults &&
+            completionModal.continuumResults.length > 0 &&
+            React.createElement(
+              "div",
+              { className: "modal-continuum" },
+              React.createElement(
+                "div",
+                { className: "panel-title" },
+                "Continuum you measured"
+              ),
+              completionModal.continuumResults.map((cr, idx) => {
+                const fitted = Number(cr.fitted);
+                const truth = Number(cr.truth);
+                const errPct =
+                  truth !== 0 ? (Math.abs(fitted - truth) / Math.abs(truth)) * 100 : NaN;
+                return React.createElement(
+                  "p",
+                  { key: idx, className: "modal-hint" },
+                  cr.label,
+                  ": ",
+                  fitted.toFixed(cr.decimals),
+                  cr.unit ? " " + cr.unit : "",
+                  " (truth ",
+                  truth.toFixed(cr.decimals),
+                  cr.unit ? " " + cr.unit : "",
+                  Number.isFinite(errPct) ? ", " + errPct.toFixed(1) + "% off" : "",
+                  ")"
+                );
+              })
+            ),
           React.createElement(
             "div",
             { className: "name-save-row" },
@@ -3585,9 +3597,13 @@ function App() {
                   React.createElement("th", null, "Fitted (" + modalAxis.unit + ")"),
                   React.createElement("th", null, "Audible Hz"),
                   React.createElement("th", { className: "error-cell" }, "Error %"),
-                  React.createElement("th", null, "Peak"),
-                  React.createElement("th", null, "Sigma"),
-                  React.createElement("th", null, "τ"),
+                  React.createElement(
+                    "th",
+                    null,
+                    modalAbsorb ? "Depth" : "T_B (K)"
+                  ),
+                  React.createElement("th", null, "σ (" + modalAxis.unit + ")"),
+                  React.createElement("th", null, "τ₀"),
                   React.createElement("th", null, "Hear")
                 )
                 ),
@@ -3636,12 +3652,18 @@ function App() {
                       React.createElement(
                         "td",
                         null,
-                        le.matchedGaussian ? le.matchedGaussian.amplitude.toFixed(3) : "—"
+                        le.matchedGaussian
+                          ? modalAmpMeta
+                            ? modalAmpMeta.format(le.matchedGaussian.amplitude)
+                            : le.matchedGaussian.amplitude.toFixed(3)
+                          : "—"
                       ),
                       React.createElement(
                         "td",
                         null,
-                        le.matchedGaussian ? le.matchedGaussian.sigma.toFixed(3) : "—"
+                        le.matchedGaussian
+                          ? le.matchedGaussian.sigma.toFixed(3) + " " + modalAxis.unit
+                          : "—"
                       ),
                       React.createElement(
                         "td",

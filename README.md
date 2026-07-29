@@ -24,52 +24,87 @@ Tip: for a public kiosk, serve the folder over `http://` (or open the file) and 
 
 ### The line profile
 
-Every line — true or player-placed — has **four** parameters, and the contribution of one line is
+Every line — true or player-placed — has **four** parameters. The optical-depth shape of one line is
 
 ```
-tau(x)       = tau * exp(-(x - center)^2 / (2 sigma^2))
-contribution = Imax * (1 - exp(-tau(x))),   Imax = amplitude / (1 - exp(-tau))
+tau(x)    = tau_0 * exp(-(x - center)^2 / (2 sigma^2))
+P(x)      = Imax * (1 - exp(-tau(x))),   Imax = amplitude / (1 - exp(-tau_0))
 ```
 
-- **Amplitude** is always the peak height (or, in absorption, the depth), whatever `tau` does.
-- **Optical depth tau** only changes the *shape*: small tau is an ordinary Gaussian, large tau saturates the line into a flat-topped (or flat-bottomed) box. That is real physics — an opaque line cannot get any brighter than the source behind it.
+so that `amplitude` always means the peak of `P` (brightness or depth), and `tau_0` only changes the *shape*: small τ₀ is an ordinary Gaussian, large τ₀ saturates the line into a flat-topped (or flat-bottomed) box.
 
-The spectrum is then composed once, per level mode, on top of a continuum that may be flat or shaped (polynomial / wide Gaussian):
+How that profile enters the spectrum depends on the mode:
 
-- **emission** — `continuum + sum of contributions`
-- **absorption** — `continuum - sum of contributions`, clamped at zero
+- **emission** — `y = C(ν) + Σ T_B,i · P_i(ν)` — brightness temperatures in **kelvin**, additive on the continuum
+- **absorption** — `y = C(λ) · Π (1 − d_i · P_i(λ))` — each line a **fractional depth of the local continuum**, so 0.8 always means “80 % of the light here is swallowed”, wherever the continuum sits. Solar and telluric lines both multiply in (imprinted at the Sun, then in our air). There is no zero clamp: a saturated core reaches zero only at depth = 1.
 
-So the two modes are the same physics with a sign flip, which is exactly the point Levels 9–12 are there to make.
+### Units on every parameter
+
+| Parameter | Emission | Absorption |
+|-----------|----------|------------|
+| Strength | Peak brightness **T_B (K)** | Line depth **% of continuum** |
+| Center | **GHz** | **nm** |
+| Width σ | **GHz**, with FWHM and km/s note | **nm**, with FWHM and km/s note |
+| Optical depth τ₀ | dimensionless (thin → thick → saturated) | same |
+
+Widths stay in wavelength/frequency (correct for a resolution-limited instrument). The note under each width slider shows the FWHM and its Doppler equivalent Δv = c · FWHM / x₀.
+
+### Spectrograph resolution
+
+The drawn widths are far broader than a real Fraunhofer or molecular line, because a 0.01 nm line is invisible across a 320 nm window. That width is the **instrument**: each level’s info strip shows `Resolution: FWHM ≈ … (R ≈ …)`. Fraunhofer’s prism (R ~ 300) shows one dark “Mg b”; Level 11’s grating (R ~ 5000) splits the triplet. The width slider cannot go below the instrumental sigma.
+
+### Physical continua
+
+Shaped continua are no longer free polynomials. Both are **normalised at the middle of the band**, so the overall amplitude is never fitted — only the physics of the shape.
+
+**Level 10 — solar continuum**
+
+```
+C(λ) = [B_λ(λ, T) / B_λ(λ_ref, T)] · exp( −0.0973 A [ (550/λ)^4 − (550/λ_ref)^4 ] )
+```
+
+- **Solar surface temperature T** (K) — Planck curvature (Wien peak near 500 nm); truth 5772 K
+- **Airmass A** — telluric reddening from Rayleigh scattering ∝ λ⁻⁴; truth 1.15; lives with the amber atmosphere controls
+
+**Level 13 — dust continuum**
+
+```
+C(ν) = 0.85 K · (ν / ν_ref)^α
+```
+
+- **Dust spectral index α** — dust emission goes as ν^α, with α = 2 + β for emissivity index β; truth 4.0
 
 ### Continuum first (two-step levels)
 
 Levels 10 and 13 require a **baseline phase** before science lines:
 
-1. Fit the continuum (and, on Level 10, the amber **telluric** O₂ lines from Earth's atmosphere).
-2. Press **Lock baseline** when the residual away from science lines is good enough and the atmospheric centres are close.
-3. Then fit the science lines. **Show residual** subtracts the locked continuum so the lines stand out.
+1. Fit the continuum (temperature + airmass on Level 10; dust index on Level 13) and, on Level 10, the amber **telluric** O₂ lines from Earth's atmosphere.
+2. Press **Lock baseline** when the residual away from science lines is good enough.
+3. Then fit the science lines. On absorption levels, **Rectify (÷ continuum)** divides by the locked continuum (and atmosphere) so lines dip from a flat 1.0 — what solar physicists call a rectified spectrum. Emission levels keep a subtractive residual.
 
-Telluric components are drawn in amber and count toward the pass — they are noise from our air, not solar features.
+Telluric lines are drawn in amber and count toward the pass — they are features of our air, not of the Sun.
 
 ### How to play
 
 1. On the **attract screen**, read the short how-to, then either press **Start with Level 1** or pick any level from **Choose a level**. Nothing is locked: every level can be played first, and each card shows its band, emission/absorption mode, how many lines are scored, and the current best score.
-2. Add components and tune four sliders. Every level allows a component for **every line it draws** (plus two spare), so the weak forest can be fitted too — a new component is dropped automatically on the strongest feature the model does not explain yet:
-   - **Amplitude** — peak height (emission) or depth (absorption)
+2. Add lines (**+ Add line**) and tune four sliders. Every level allows a line for **every feature it draws** (plus two spare). New lines are added at the **top** of the list so they are visible immediately. Remove with **− Remove line N**.
+3. Every slider has **(−)** and **(+)** nudge buttons for fine tuning; there is no separate number box. Parameters:
+   - **Peak brightness T_B (K)** or **Line depth (% of continuum)**
    - **Center** — in **GHz** on the radio levels, in **nm** on the solar levels
-   - **Width / sigma**
-   - **Optical depth tau** — Gaussian when thin, flat-topped when thick
-3. Placing a center on a wide level: **click the plot** to drop the selected component there, then use the **fine nudge** buttons or the fine number box; the slider is for coarse moves.
-4. On the wide emission levels, press **Stretch weak lines (log)** to switch the intensity axis to logarithmic and see the faint forest under the bright lines.
-5. Match the green **model** to the blue **observed spectrum**.
-6. Click **Submit fit**. You pass when **every** line center on the plot is inside that level's threshold (0.015%–0.5%, see the table below).
-7. In the congratulations box you can:
-   - See **stars**, mean error %, MSE, and fitted parameters (including tau and audible Hz)
+   - **Width σ** — with FWHM and km/s note
+   - **Line-centre optical depth τ₀** — Gaussian when thin, flat when thick
+4. Placing a center on a wide level: **click the plot** to drop the selected line there, then use the nudge buttons; the slider is for coarse moves.
+5. On the wide emission levels, press **Stretch weak lines (log)** to switch the intensity axis to logarithmic and see the faint forest under the bright lines.
+6. Match the green **model** to the blue **observed spectrum**.
+7. Click **Submit fit**. You pass when **every** line center on the plot is inside that level's threshold (0.015%–0.5%, see the table below).
+8. In the congratulations box you can:
+   - See **stars**, mean error %, continuum recovery (solar T, airmass, or dust α), and fitted parameters with units
    - Enter your **name** and **Save to leaderboard**
    - **Play** each line or **Play all lines** (chord)
    - Read **molecule facts** / **element facts** and open **CDMS** (link / QR)
    - **Save as CSV**, go to the **Next level**, or **Exit**
 
+A compact **Level info** strip under the plot shows line counts, pass threshold, spectrograph resolution, and baseline state. Expand **What do these numbers mean?** for the short explanation.
 ### Sonification
 
 Spectral lines are far outside human hearing (~20 Hz–20 kHz): a 100 GHz radio line and a 589 nm sodium line are at 10^11 and 5×10^14 Hz. Each level picks one of two rules, and the “How do we turn lines into sound?” panel says which one is in use.
@@ -101,14 +136,14 @@ Other audio notes:
 | 6 Dense tracers | 263–282 GHz | HCN, HCO+, HNC (J=3-2), one unknown | Optically thick lines |
 | 7 Wide 3 mm scan | 84–116 GHz | 16 lines (SiO through CO) | 20:1 intensity range, ratio sonification, log-Y toggle |
 | 8 HEXOS Band 1a | 480–560 GHz | CI, HCN, HCO+, CS, C18O, 13CO, H2O | Curated Orion KL vignette |
-| 9 Radio absorption | 86–95 GHz | SiO, H13CO+, C2H, HCN, HCO+, HNC, N2H+ | Absorption vs continuum; N2H+ core saturated |
-| 13 Continuum first | 88–116 GHz | HCN, HCO+, N2H+, CS, C18O, 13CO, CO | Rising poly continuum — lock baseline, then fit lines |
+| 9 Radio absorption | 86–95 GHz | SiO, H13CO+, C2H, HCN, HCO+, HNC, N2H+ | Absorption as continuum depth fraction; N2H+ core saturated |
+| 13 Continuum first | 88–116 GHz | HCN, HCO+, N2H+, CS, C18O, 13CO, CO | Dust power-law continuum (α) — lock baseline, then fit lines |
 
 **Solar track — absorption, Fraunhofer wavelengths**
 
 | Level | Band | Lines (all scored) | Notes |
 |-------|------|--------------------|-------|
-| 10 Solar spectrum | 380–700 nm | Ca II K/H, Fe, Balmer, Mg b, Na D, He I + telluric O₂ | Two-step: sloping continuum + amber atmosphere first |
+| 10 Solar spectrum | 380–700 nm | Ca II K/H, Fe, Balmer, Mg b, Na D, He I + telluric O₂ | Two-step: solar T + airmass + amber O₂ first |
 | 11 Magnesium close-up | 515.5–519.5 nm | Mg I b1, b2, b4 + Fe I | Level 10's single “Mg b” resolves into a triplet |
 | 12 Sodium close-up | 586.5–591.5 nm | Na I D2, D1 + He I D3 | Both Na cores saturated flat |
 
@@ -118,7 +153,7 @@ Difficulty rises with blending, dynamic range, saturation, and unknown species. 
 
 - Each level has its own **pass threshold** on the center error, from 0.5% (Level 2) down to 0.015% (Level 11) — 5% of a 400 GHz window would be meaningless.
 - **Stars** (out of 5) come from the **mean center error %** as a fraction of that level's threshold: ≤4% of it → 5★ · ≤10% → 4★ · ≤22% → 3★ · ≤50% → 2★ · ≤100% → 1★. Levels may override the bands.
-- Matching is **one-to-one**: each player component can be claimed by only one true line (closest pairs first), so a single broad Gaussian cannot “fit” three blended lines.
+- Matching is **one-to-one**: each player line can be claimed by only one true line (closest pairs first), so a single broad Gaussian cannot “fit” three blended lines.
 - Live **spectrum mismatch %** = RMSE / intensity range × 100 (raw MSE is often tiny even for mediocre fits).
 - **Named leaderboard** stored in the browser (`localStorage` key `spectrumFitter.leaderboard.v3`), grouped by track
 - Top **5** scores **per level**, ranked by mean % error (then MSE)
@@ -132,10 +167,10 @@ Scores stay on that browser/kiosk only; there is no online server.
 - Molecule and element fact cards after a successful fit
 - CDMS “Learn more” link + offline QR (`cdms-qr.png`); solar levels point at the Fraunhofer line tables instead
 - Visible-spectrum colour wash behind the solar plots
-- Large touch-friendly buttons, click-to-place on the plot
+- Wide layout (up to 1800 px) with line cards in a multi-column grid so several lines’ parameters are visible at once
+- Large touch-friendly buttons, click-to-place on the plot, (−)/(+) fine nudges on every slider
 - Idle timeout (120 s) → back to attract screen
-- CSV export of level mode, spectral unit, every fitted line, tau, errors, the audio rule, and audible Hz
-
+- CSV export of level mode, spectral unit, continuum recovery, every fitted line with units, τ₀, errors, the audio rule, and audible Hz
 ### Controls (header)
 
 - **Vol** — master volume

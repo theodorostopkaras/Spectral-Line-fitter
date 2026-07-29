@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+html {
+  /* Bump the rem root so every rem-based label, pill and button reads a bit larger. */
+  font-size: 112.5%;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -18,7 +23,8 @@ body {
 
 .app-shell {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1800px;
+  min-height: 100vh;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -84,17 +90,29 @@ body {
   border-color: transparent;
 }
 
+/* Plot on the left, two columns of line cards on the right: three columns in all,
+   so several lines' parameters are readable at once. Fill leftover viewport height
+   so the spectrum and the fit panel grow instead of leaving empty space below. */
 .game-layout {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: minmax(420px, 1.25fr) minmax(540px, 1fr);
   gap: 16px;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-height: calc(100vh - 88px);
 }
 
 @media (max-width: 900px) {
   .game-layout {
     grid-template-columns: 1fr;
+    min-height: 0;
   }
+}
+
+.game-layout > .plot-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .panel {
@@ -111,23 +129,41 @@ body {
   margin-bottom: 8px;
 }
 
-.hud-metrics {
+/* Compact status line under the plot: pills plus an expandable explanation,
+   so it costs one row instead of a whole panel beside the sliders. */
+.level-info-strip {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(80, 80, 160, 0.5);
+}
+
+.info-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 6px;
 }
 
 .metric-pill {
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: rgba(40, 40, 90, 0.8);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
 }
 
-.hud-status {
-  font-size: 0.8rem;
+.info-details {
+  margin-top: 6px;
+}
+
+.info-details > summary {
+  font-size: 0.86rem;
+  color: #93c5fd;
+  cursor: pointer;
+}
+
+.info-status {
+  font-size: 0.86rem;
   opacity: 0.9;
+  margin: 6px 0 0;
 }
 
 .plot-header {
@@ -178,7 +214,9 @@ body {
 
 .plot-wrap {
   position: relative;
-  height: 380px;
+  flex: 1 1 auto;
+  min-height: clamp(420px, 58vh, 820px);
+  height: auto;
 }
 
 .plot-canvas {
@@ -199,7 +237,7 @@ body {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  max-height: calc(100vh - 96px);
+  height: 100%;
 }
 
 .controls-column > .panel:first-child {
@@ -218,14 +256,28 @@ body {
    however many components the player adds. */
 .component-list {
   flex: 1 1 auto;
-  min-height: 150px;
-  max-height: clamp(200px, 60vh, 640px);
+  min-height: 220px;
+  max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
   margin-right: -6px;
   scrollbar-width: thin;
   scrollbar-color: rgba(129, 140, 248, 0.6) transparent;
+}
+
+/* Line cards flow into as many columns as the panel width allows. */
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+@media (max-width: 1200px) {
+  .component-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .component-list::-webkit-scrollbar {
@@ -244,21 +296,27 @@ body {
 /* Stacked layout: the page scrolls anyway, so only the list itself needs a cap. */
 @media (max-width: 900px) {
   .controls-column {
-    max-height: none;
+    height: auto;
+  }
+
+  .plot-wrap {
+    min-height: 360px;
+    height: clamp(360px, 48vh, 520px);
+    flex: none;
   }
 
   .component-list {
-    max-height: 46vh;
+    max-height: 50vh;
   }
 }
 
 .gaussian-row {
   border-radius: 8px;
-  padding: 8px;
+  padding: 6px 8px;
   background: rgba(25, 25, 60, 0.9);
-  margin-bottom: 6px;
   border: 1px solid transparent;
   cursor: pointer;
+  align-self: start;
 }
 
 .gaussian-row-selected {
@@ -283,53 +341,82 @@ body {
   color: #a5b4fc;
 }
 
-.fine-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.fine-input {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(129, 140, 248, 0.45);
-  background: rgba(15, 23, 42, 0.9);
-  color: #f5f5ff;
-  font-size: 0.78rem;
-}
-
-.fine-unit {
-  font-size: 0.72rem;
-  opacity: 0.7;
-}
-
 .gaussian-row-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   margin-bottom: 4px;
 }
 
 .slider-group {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.slider-group:last-child {
+  margin-bottom: 0;
 }
 
 .slider-label {
   display: flex;
   justify-content: space-between;
-  font-size: 0.75rem;
-  margin-bottom: 2px;
+  gap: 6px;
+  font-size: 0.82rem;
+  margin-bottom: 1px;
 }
 
 .slider-label span.value {
-  opacity: 0.8;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* A nudge button on each side of every slider: coarse by dragging, fine by clicking. */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .slider-input {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #818cf8;
+}
+
+.nudge-button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 120, 200, 0.7);
+  background: transparent;
+  color: #e5e5ff;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nudge-button:hover:not(:disabled) {
+  border-color: rgba(129, 140, 248, 0.95);
+  background: rgba(79, 70, 229, 0.25);
+}
+
+.nudge-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The physical reading of a parameter: FWHM, velocity width, saturation state. */
+.param-note {
+  font-size: 0.76rem;
+  opacity: 0.75;
+  margin-top: 1px;
+}
+
+.remove-line-button {
+  white-space: nowrap;
 }
 
 .controls-header {
@@ -348,7 +435,7 @@ body {
 }
 
 .count-label {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .button-row {
@@ -667,10 +754,20 @@ body {
   margin-bottom: 4px;
 }
 
-.modal-hint {
-  font-size: 0.78rem;
-  opacity: 0.85;
-  margin: 0 0 10px;
+.modal-continuum {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(129, 140, 248, 0.4);
+}
+
+.modal-continuum .panel-title {
+  margin-bottom: 4px;
+}
+
+.modal-continuum .modal-hint {
+  margin: 2px 0;
 }
 
 .modal-bonus {
@@ -683,7 +780,7 @@ body {
   color: #bbf7d0;
 }
 
-.hud-bonus {
+.info-bonus {
   margin-top: 6px;
   color: #bbf7d0;
 }
@@ -1001,10 +1098,14 @@ body {
 .fit-subpage .component-list,
 .fit-subpage .telluric-block {
   flex: 1 1 auto;
-  min-height: 120px;
-  max-height: clamp(180px, 42vh, 520px);
+  min-height: 160px;
+  max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.fit-subpage .component-grid {
+  align-content: start;
 }
 
 .fit-panel > .button-row {
@@ -1019,6 +1120,9 @@ body {
 }
 
 .continuum-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px 12px;
   margin-bottom: 8px;
 }
 
