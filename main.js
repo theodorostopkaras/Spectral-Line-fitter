@@ -441,7 +441,7 @@ function generateSpectrum(level) {
   return { x, y, trueLines: level.trueLines.slice() };
 }
 
-/** Every drawn spectral line counts toward pass / stars. */
+/** Drawn lines with graded !== false count toward pass / stars; graded:false are optional bonus. */
 function isGradedLine(line) {
   return line.graded !== false;
 }
@@ -510,6 +510,17 @@ function meanPercentError(lineErrors) {
   const vals = lineErrors.map((le) => le.percentError).filter((v) => v != null && isFinite(v));
   if (!vals.length) return NaN;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+/** How many graded lines already sit inside the level's pass threshold. */
+function countLinesWithin(lineErrors, thresholdPercent) {
+  return lineErrors.filter(
+    (le) => le.percentError != null && le.percentError <= thresholdPercent
+  ).length;
+}
+
+function lineWithinThreshold(le, thresholdPercent) {
+  return le && le.percentError != null && le.percentError <= thresholdPercent;
 }
 
 /**
@@ -1020,7 +1031,7 @@ const LEVELS = [
     axis: "GHz",
     sonify: "stretch",
     blurb:
-      "Six species in nine gigahertz. One unidentified line hides in the shoulder of C34S — find it too; every line on the plot counts.",
+      "Five clear peaks across nine gigahertz. An unidentified shoulder sits on C34S — fitting that extra blend is optional bonus, not required to pass.",
     xMin: 93,
     xMax: 102,
     noiseLevel: 0.2,
@@ -1029,7 +1040,8 @@ const LEVELS = [
     trueLines: [
       { amplitude: 1.6, center: 93.173764, sigma: 0.35, tau: 0.3, knownLine: true, label: "N2H+", transition: "J=1-0" },
       { amplitude: 2.4, center: 96.412950, sigma: 0.28, tau: 0.5, knownLine: true, label: "C34S", transition: "J=2-1" },
-      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false },
+      // Merged into the C34S bump — drawn for realism, not required to pass.
+      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false, graded: false },
       { amplitude: 3.0, center: 97.980953, sigma: 0.32, tau: 1.6, knownLine: true, label: "CS", transition: "J=2-1" },
       { amplitude: 2.6, center: 99.299870, sigma: 0.24, tau: 0.8, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
       { amplitude: 0.9, center: 100.076392, sigma: 0.22, tau: 0.25, knownLine: true, label: "HC3N", transition: "J=11-10" },
@@ -1042,7 +1054,8 @@ const LEVELS = [
     mode: "emission",
     axis: "GHz",
     sonify: "stretch",
-    blurb: "A pair of formaldehyde lines less than a linewidth apart, and CO saturated flat on top.",
+    blurb:
+      "Four clear peaks: a blended formaldehyde bump, C18O, 13CO, and saturated CO. Splitting the formaldehyde blend into two centres is optional bonus.",
     xMin: 217,
     xMax: 235,
     noiseLevel: 0.32,
@@ -1050,7 +1063,8 @@ const LEVELS = [
     errorThresholdPercent: 0.25,
     trueLines: [
       { amplitude: 2.5, center: 218.222192, sigma: 0.28, tau: 0.8, knownLine: true, label: "H2CO", transition: "3(0,3)-2(0,2)" },
-      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false },
+      // Same bump as H2CO (~1 σ apart) — drawn as a blend, not required to pass.
+      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false, graded: false },
       { amplitude: 2.2, center: 219.560319, sigma: 0.26, tau: 0.5, knownLine: true, label: "C18O", transition: "J=2-1" },
       { amplitude: 2.6, center: 220.398684, sigma: 0.26, tau: 1.2, knownLine: true, label: "13CO", transition: "J=2-1" },
       { amplitude: 4.0, center: 230.538000, sigma: 0.5, tau: 4.0, knownLine: true, label: "CO", transition: "J=2-1" },
@@ -1083,7 +1097,8 @@ const LEVELS = [
     mode: "emission",
     axis: "GHz",
     sonify: "stretch",
-    blurb: "One of these bumps is an unidentified U-line — real surveys are full of them.",
+    blurb:
+      "Three clear peaks: CO, an unidentified U-line, and CS. A weaker shoulder on CS is drawn for realism but is optional bonus.",
     xMin: 228,
     xMax: 246,
     noiseLevel: 0.36,
@@ -1092,7 +1107,8 @@ const LEVELS = [
     trueLines: [
       { amplitude: 3.6, center: 230.538000, sigma: 0.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=2-1" },
       { amplitude: 1.4, center: 241.616183, sigma: 0.4, tau: 0.3, knownLine: false },
-      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false },
+      // Merged into the CS bump — not a separate visible peak.
+      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false, graded: false },
       { amplitude: 2.4, center: 244.935557, sigma: 0.42, tau: 1.0, knownLine: true, label: "CS", transition: "J=5-4" },
     ],
   },
@@ -1227,7 +1243,8 @@ const LEVELS = [
       { amplitude: 0.2, center: 495.761, sigma: 0.6, tau: 1, knownLine: true, label: "Fe I", transition: "c" },
       { amplitude: 0.55, center: 517.3, sigma: 1.1, tau: 4, knownLine: true, label: "Mg I", transition: "b triplet (blend)" },
       { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, label: "Fe I", transition: "E2" },
-      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, label: "He I", transition: "D3" },
+      // Too faint beside Na D at this zoom — scored in the sodium close-up instead.
+      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, label: "He I", transition: "D3", graded: false },
       { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D doublet (blend)" },
       { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, role: "telluric", label: "O2", transition: "a (telluric)" },
       { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "C (H-alpha)" },
@@ -1911,20 +1928,29 @@ function LevelInfoStrip(props) {
     baselineLocked,
     maxComponents,
     lineCount,
+    scoredLineCount,
     resolutionText,
     completionSummary,
   } = props;
+  const scored = scoredLineCount != null ? scoredLineCount : lineCount;
+  const drawn = lineCount;
   return React.createElement(
     "div",
     { className: "level-info-strip" },
     React.createElement(
       "div",
       { className: "info-pills" },
-      React.createElement("div", { className: "metric-pill" }, "Lines drawn: ", lineCount),
       React.createElement(
         "div",
         { className: "metric-pill" },
-        "Lines you may fit: ",
+        drawn === scored
+          ? "Lines to fit: " + scored
+          : "Need " + scored + " of " + drawn + " drawn"
+      ),
+      React.createElement(
+        "div",
+        { className: "metric-pill" },
+        "Lines you may place: ",
         maxComponents
       ),
       React.createElement(
@@ -2531,20 +2557,18 @@ function SpectrumGameView(props) {
   function handleSubmit() {
     if (needsBaseline && !baselineLocked) return;
     const lineErrors = computeLineErrors(gradedScience, components);
-    const allScienceWithin = lineErrors.every(
-      (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
+    const allScienceWithin = lineErrors.every((le) =>
+      lineWithinThreshold(le, level.errorThresholdPercent)
     );
     const telluricErrors = computeLineErrors(gradedTellurics, telluricComponents);
     const allTelluricWithin =
       !gradedTellurics.length ||
-      telluricErrors.every(
-        (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
-      );
+      telluricErrors.every((le) => lineWithinThreshold(le, level.errorThresholdPercent));
     const claimed = new Set(lineErrors.map((le) => le.matchedGaussian && le.matchedGaussian.id));
     const spare = components.filter((c) => !claimed.has(c.id));
     const extraLines = scienceTruth.filter((line) => !isGradedLine(line));
-    const bonusErrors = computeLineErrors(extraLines, spare).filter(
-      (le) => le.percentError != null && le.percentError <= level.errorThresholdPercent
+    const bonusErrors = computeLineErrors(extraLines, spare).filter((le) =>
+      lineWithinThreshold(le, level.errorThresholdPercent)
     );
     const meanErr = meanPercentError(lineErrors.concat(telluricErrors));
     const stars = starsFromMeanError(meanErr, starBandsForLevel(level));
@@ -2568,13 +2592,36 @@ function SpectrumGameView(props) {
       stars,
       sonification,
       passed,
+      withinCount:
+        countLinesWithin(lineErrors, level.errorThresholdPercent) +
+        countLinesWithin(telluricErrors, level.errorThresholdPercent),
+      gradedCount: gradedScience.length + gradedTellurics.length,
+      thresholdPercent: level.errorThresholdPercent,
       baselineLocked: !needsBaseline || baselineLocked,
       continuumResults: continuumResults(continuumFit, trueContinuum),
     };
     setCompletionSummary(summary);
     setCompleted(passed);
-    if (passed) onCompletion(summary);
+    // Always open the result modal — a green spectrum match can still fail the center check.
+    onCompletion(summary);
   }
+
+  const liveScienceErrors = React.useMemo(
+    () => computeLineErrors(gradedScience, components),
+    [gradedScience, components]
+  );
+  const liveTelluricErrors = React.useMemo(
+    () => computeLineErrors(gradedTellurics, telluricComponents),
+    [gradedTellurics, telluricComponents]
+  );
+  const liveWithinCount =
+    countLinesWithin(liveScienceErrors, level.errorThresholdPercent) +
+    countLinesWithin(liveTelluricErrors, level.errorThresholdPercent);
+  const liveGradedCount = gradedScience.length + gradedTellurics.length;
+  const centersReady =
+    liveGradedCount > 0 &&
+    liveWithinCount === liveGradedCount &&
+    (!needsBaseline || baselineLocked);
 
   const fitQuality = describeFitQuality(fitPct);
   const amplitudeInfo = amplitudeMeta(level);
@@ -2672,7 +2719,7 @@ function SpectrumGameView(props) {
               ? absorb
                 ? "Rectified: divided by your continuum, so line depths read straight off the axis. Click the plot to place the selected line."
                 : "Residual: continuum subtracted, so the lines stand alone above zero. Click the plot to place the selected line."
-              : "Click the plot to move the selected line there. Every drawn science line can be fitted — weak ones may not decide the pass."
+              : "Click the plot to move the selected line there. Fit each separate peak you can see — blended shoulders are optional bonus."
       ),
       completed &&
         React.createElement(
@@ -2691,7 +2738,8 @@ function SpectrumGameView(props) {
         needsBaseline,
         baselineLocked,
         maxComponents,
-        lineCount: gradedScience.length + gradedTellurics.length,
+        lineCount: scienceTruth.length + telluricTruth.length,
+        scoredLineCount: gradedScience.length + gradedTellurics.length,
         resolutionText,
         completionSummary,
       })
@@ -3083,6 +3131,23 @@ function SpectrumGameView(props) {
             )
           ),
         React.createElement(
+          "p",
+          {
+            className:
+              "submit-check " + (centersReady ? "submit-check-ready" : "submit-check-pending"),
+          },
+          "Line centers: ",
+          liveWithinCount,
+          " / ",
+          liveGradedCount,
+          " within ",
+          level.errorThresholdPercent,
+          "%",
+          centersReady
+            ? " — ready to submit"
+            : " — green spectrum match is not enough; nudge each center"
+        ),
+        React.createElement(
           "div",
           { className: "button-row" },
           React.createElement(
@@ -3097,6 +3162,12 @@ function SpectrumGameView(props) {
               className: "primary-button",
               onClick: handleSubmit,
               disabled: needsBaseline && !baselineLocked,
+              title:
+                needsBaseline && !baselineLocked
+                  ? "Lock the baseline first"
+                  : centersReady
+                    ? "Check your fit"
+                    : "You can still submit — we will show which centers need work",
             },
             "Submit fit"
           )
@@ -3175,15 +3246,27 @@ function App() {
   }
 
   function handleLevelCompleted(summary) {
-    setPassedLevels((prev) => {
-      const next = new Set(prev);
-      next.add(summary.levelId);
-      return next;
-    });
+    if (summary && summary.passed) {
+      setPassedLevels((prev) => {
+        const next = new Set(prev);
+        next.add(summary.levelId);
+        return next;
+      });
+    }
     setPlayerName("");
     setLeaderboardMsg("");
     setAudioStatus("");
     setCompletionModal(summary);
+    resetIdle();
+  }
+
+  function handleKeepFitting() {
+    stopAllAudio();
+    setCompletionModal(null);
+    setShowWhyScale(false);
+    setPlayerName("");
+    setLeaderboardMsg("");
+    setAudioStatus("");
     resetIdle();
   }
 
@@ -3338,6 +3421,11 @@ function App() {
   const modalLevel = completionModal ? levelById(completionModal.levelId) : null;
   const modalAxis = axisByKey(completionModal ? completionModal.axis : "GHz");
   const modalAbsorb = completionModal && completionModal.mode === "absorption";
+  const modalPassed = !!(completionModal && completionModal.passed);
+  const modalThreshold =
+    (completionModal && completionModal.thresholdPercent) ||
+    (modalLevel && modalLevel.errorThresholdPercent) ||
+    5;
   const modalAmpMeta = modalLevel ? amplitudeMeta(modalLevel) : null;
   const modalBands = modalLevel ? starBandsForLevel(modalLevel) : null;
   const knownFacts =
@@ -3486,19 +3574,41 @@ function App() {
         React.createElement(
           "div",
           { className: "modal-content modal-content-wide" },
-          React.createElement("div", { className: "panel-title" }, "Congratulations!"),
+          React.createElement(
+            "div",
+            { className: "panel-title" },
+            modalPassed ? "Congratulations!" : "Not quite yet"
+          ),
           React.createElement(
             "p",
             { className: "modal-lead" },
-            "You passed Level ",
-            completionModal.levelId,
-            " — ",
-            completionModal.levelName || ""
+            modalPassed
+              ? "You passed Level " +
+                completionModal.levelId +
+                " — " +
+                (completionModal.levelName || "")
+              : "Level " +
+                completionModal.levelId +
+                " needs every scored line within " +
+                modalThreshold +
+                "% in " +
+                modalAxis.unit +
+                ". Right now " +
+                (completionModal.withinCount != null ? completionModal.withinCount : "—") +
+                " of " +
+                (completionModal.gradedCount != null ? completionModal.gradedCount : "—") +
+                " are close enough."
           ),
+          !modalPassed &&
+            React.createElement(
+              "p",
+              { className: "modal-hint modal-hint-warn" },
+              "A green “spectrum match” means the whole curve looks similar — pass still checks each line centre. Nudge the off lines in the table below, then Submit again."
+            ),
           React.createElement(
             "div",
             { className: "modal-score-row" },
-            React.createElement(StarsDisplay, { stars: completionModal.stars }),
+            modalPassed && React.createElement(StarsDisplay, { stars: completionModal.stars }),
             React.createElement(
               "span",
               null,
@@ -3513,14 +3623,16 @@ function App() {
               "%"
             )
           ),
-          React.createElement(
-            "p",
-            { className: "modal-hint" },
-            "Stars use the mean center error (not raw MSE), scaled to this level: 5★ needs ≤",
-            modalBands ? modalBands[0].toPrecision(2) : "0.05",
-            "% — keep refining for the leaderboard!"
-          ),
-          completionModal.continuumResults &&
+          modalPassed &&
+            React.createElement(
+              "p",
+              { className: "modal-hint" },
+              "Stars use the mean center error (not raw MSE), scaled to this level: 5★ needs ≤",
+              modalBands ? modalBands[0].toPrecision(2) : "0.05",
+              "% — keep refining for the leaderboard!"
+            ),
+          modalPassed &&
+            completionModal.continuumResults &&
             completionModal.continuumResults.length > 0 &&
             React.createElement(
               "div",
@@ -3550,33 +3662,35 @@ function App() {
                 );
               })
             ),
-          React.createElement(
-            "div",
-            { className: "name-save-row" },
+          modalPassed &&
             React.createElement(
-              "label",
-              { className: "name-label" },
-              "Your name",
-              React.createElement("input", {
-                type: "text",
-                className: "name-input",
-                maxLength: MAX_NAME_LEN,
-                placeholder: "Your name",
-                value: playerName,
-                onChange: (e) => setPlayerName(e.target.value),
-              })
+              "div",
+              { className: "name-save-row" },
+              React.createElement(
+                "label",
+                { className: "name-label" },
+                "Your name",
+                React.createElement("input", {
+                  type: "text",
+                  className: "name-input",
+                  maxLength: MAX_NAME_LEN,
+                  placeholder: "Your name",
+                  value: playerName,
+                  onChange: (e) => setPlayerName(e.target.value),
+                })
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "primary-button",
+                  onClick: handleSaveToLeaderboard,
+                },
+                "Save to leaderboard"
+              )
             ),
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                className: "primary-button",
-                onClick: handleSaveToLeaderboard,
-              },
-              "Save to leaderboard"
-            )
-          ),
-          leaderboardMsg &&
+          modalPassed &&
+            leaderboardMsg &&
             React.createElement("p", { className: "leaderboard-msg" }, leaderboardMsg),
           completionModal.lineErrors &&
             completionModal.lineErrors.length > 0 &&
@@ -3646,7 +3760,11 @@ function App() {
                       ),
                       React.createElement(
                         "td",
-                        { className: "error-cell" },
+                        {
+                          className:
+                            "error-cell" +
+                            (lineWithinThreshold(le, modalThreshold) ? "" : " error-over"),
+                        },
                         le.percentError != null ? le.percentError.toFixed(3) : "—"
                       ),
                       React.createElement(
@@ -3689,13 +3807,15 @@ function App() {
               )
             )
           ),
-          completionModal.extraLineCount > 0 &&
+          modalPassed &&
+            completionModal.extraLineCount > 0 &&
             React.createElement(
               "p",
               { className: "modal-bonus" },
               describeBonusLines(completionModal)
             ),
-          completionModal.sonification &&
+          modalPassed &&
+            completionModal.sonification &&
             React.createElement(
               "div",
               { className: "sonify-panel" },
@@ -3770,7 +3890,8 @@ function App() {
                   )
                 )
             ),
-          (knownFacts.length > 0 || hasUnknownLines) &&
+          modalPassed &&
+            (knownFacts.length > 0 || hasUnknownLines) &&
             React.createElement(
               "div",
               { className: "fact-cards" },
@@ -3813,11 +3934,17 @@ function App() {
               { type: "button", className: "secondary-button", onClick: handleExitGame },
               "Exit game"
             ),
-            React.createElement(
-              "button",
-              { type: "button", className: "primary-button", onClick: handleNextLevel },
-              completionModal.levelId < LEVELS.length ? "Next level" : "Stay on last level"
-            )
+            modalPassed
+              ? React.createElement(
+                  "button",
+                  { type: "button", className: "primary-button", onClick: handleNextLevel },
+                  completionModal.levelId < LEVELS.length ? "Next level" : "Stay on last level"
+                )
+              : React.createElement(
+                  "button",
+                  { type: "button", className: "primary-button", onClick: handleKeepFitting },
+                  "Keep fitting"
+                )
           )
         )
       )

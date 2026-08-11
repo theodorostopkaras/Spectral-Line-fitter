@@ -670,6 +670,29 @@ body {
   font-size: 0.8rem;
 }
 
+.submit-check {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.submit-check-ready {
+  color: #4ade80;
+}
+
+.submit-check-pending {
+  color: #fcd34d;
+}
+
+.modal-hint-warn {
+  color: #fcd34d;
+}
+
+.error-cell.error-over {
+  color: #fb7185;
+  font-weight: 600;
+}
+
 .lines-table {
   width: 100%;
   border-collapse: collapse;
@@ -1113,6 +1136,10 @@ body {
   padding-top: 10px;
   border-top: 1px solid rgba(80, 80, 160, 0.5);
   flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.98));
 }
 
 .baseline-panel {
