@@ -9,6 +9,7 @@ Radio rest frequencies come from the [Cologne Database for Molecular Spectroscop
 | File | Role |
 |------|------|
 | `index.html` | Page shell (loads React, Chart.js, CSS, `main.js`) |
+| `vendor/` | Local copies of React 18 and Chart.js 4 (no internet needed) |
 | `main.js` | Game logic, levels, audio, leaderboard, UI |
 | `styles.css` | Layout and kiosk-friendly styling |
 | `cdms-qr.png` | Offline QR code linking to CDMS |
@@ -17,8 +18,8 @@ Radio rest frequencies come from the [Cologne Database for Molecular Spectroscop
 ### How to run
 
 1. Open `index.html` in a modern browser (Chrome, Edge, or Firefox).
-2. No build step or Node.js is required (React and Chart.js load from CDNs).
-3. Keep `cdms-qr.png` next to `index.html` so the QR works offline.
+2. No build step, Node.js, or internet is required — React and Chart.js are in `vendor/`.
+3. Keep `vendor/` and `cdms-qr.png` next to `index.html` so the game and QR work offline.
 
 Tip: for a public kiosk, serve the folder over `http://` (or open the file) and use fullscreen; the game returns to the attract screen after **120 seconds** of inactivity.
 
