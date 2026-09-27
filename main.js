@@ -1,4 +1,6 @@
-// Spectrum Fitter — public outreach game
+// Spectrum Fitter — kids' edition (ages 8–10), English / Deutsch.
+// Ten short windows cut from the solar spectrum and a radio dust continuum; the computer fits
+// the continuum and Earth's atmosphere, the kids find the lines.
 // Radio rest frequencies from CDMS, solar Fraunhofer wavelengths from standard line tables.
 // Lines are emission or absorption and carry an optical depth, so strong lines saturate.
 // Every fitted parameter carries a physical unit: brightness temperature in K, line depth as
@@ -14,7 +16,9 @@
  */
 
 const CDMS_URL = "https://cdms.astro.uni-koeln.de/classic/";
-const STORAGE_KEY = "spectrumFitter.leaderboard.v3";
+const STORAGE_KEY = "spectrumFitter.kids.v1";
+const LANG_KEY = "spectrumFitter.lang";
+const STICKER_KEY = "spectrumFitter.kids.stickers";
 const IDLE_MS = 120000;
 const SPEED_OF_LIGHT_M_S = 299792458;
 /** Narrow-band outreach stretch: Hz of pitch change per 1 GHz of rest-frequency separation. */
@@ -26,7 +30,7 @@ const SONIFY_RATIO_CENTER_HZ = 632;
 const SONIFY_RATIO_MIN_HZ = 150;
 const SONIFY_RATIO_MAX_HZ = 4000;
 /** Star bands as fractions of a level's pass threshold, so every level scales the same way. */
-const STAR_BAND_FRACTIONS = [0.04, 0.1, 0.22, 0.5, 1.0];
+const STAR_BAND_FRACTIONS = [0.15, 0.3, 0.5, 0.75, 1.0];
 /** Below this optical depth the profile is indistinguishable from a pure Gaussian. */
 const TAU_THIN = 1e-3;
 const TAU_MIN = 0.02;
@@ -47,6 +51,360 @@ const RAYLEIGH_REF_NM = 550;
 const SUN_TEFF_K = 5772;
 /** sigma -> FWHM for a Gaussian. */
 const FWHM_PER_SIGMA = 2 * Math.sqrt(2 * Math.LN2);
+
+/** Kids' sonification: the window is spread over two octaves starting at middle C. */
+const WINDOW_LOW_HZ = 261.63;
+
+// ——— Language (English / Deutsch) ———
+
+const STRINGS = {
+  en: {
+    appTitle: "Spectrum Detective",
+    tagline: "Find the hidden lines in starlight!",
+    howto1: "Light from the Sun and from space clouds has a smooth glow with a few special lines in it.",
+    howto2: "First, let the computer find the smooth glow — and remove it.",
+    howto3: "Then YOU find the lines: click where each dip or bump is, and make your line as deep and wide as the real one.",
+    howto4: "Press “Check my answer!” and listen to the lines as music.",
+    start: "Start with Level 1",
+    orPick: "…or pick any level below.",
+    chooseLevel: "Choose a level",
+    trackSolar: "Sunlight",
+    trackSolarDesc: "dark lines in the Sun's rainbow",
+    trackDust: "Radio clouds",
+    trackDustDesc: "bright lines from cold space clouds",
+    linesToFind: "{n} lines to find",
+    lineToFind: "1 line to find",
+    notPlayed: "Not played yet",
+    best: "best: {name}",
+    leaderboard: "Hall of fame",
+    leaderboardIntro: "The best detectives on this computer.",
+    resetLeaderboard: "Clear hall of fame",
+    resetConfirm: "Clear the hall of fame and the sticker book on this computer? All names and stickers will be deleted.",
+    noScores: "No names yet — be the first!",
+    learnMore: "Want to know more?",
+    learnMoreText: "The Sun's dark lines were first mapped by Joseph von Fraunhofer in 1814. The radio lines come from the Cologne Database for Molecular Spectroscopy (CDMS).",
+    qrAlt: "QR code linking to CDMS",
+    home: "Home",
+    vol: "Vol",
+    volume: "Volume",
+    mute: "Mute",
+    unmute: "Sound on",
+    language: "Language",
+    level: "Level {n}",
+    absorption: "Dark lines",
+    emission: "Bright lines",
+    step1: "Step 1 · The background",
+    step2: "Step 2 · Find the lines",
+    bgExplainSolar: "The smooth curve is the Sun's glow. Its shape tells us how hot the Sun is.",
+    bgExplainDust: "The rising background is cold dust in space, glowing in radio light.",
+    bgExplainAtmos: "The orange dips are made by oxygen in Earth's air — not by the Sun!",
+    fitBg: "🤖 Computer, fit the background!",
+    fitting: "The computer is thinking…",
+    bgFitted: "Done! The grey dashed curve follows the background now.",
+    removeBg: "✨ Remove it!",
+    removed: "Background removed — now only the lines are left.",
+    before: "Show before",
+    after: "Show after",
+    locked: "Do step 1 first.",
+    addLine: "+ Add line",
+    lineN: "Line {n}",
+    selected: "selected",
+    removeLine: "✕ Remove",
+    linesCount: "Lines: {n} / {max}",
+    where: "Where is it?",
+    howDeep: "How deep?",
+    howBright: "How bright?",
+    howWide: "How wide?",
+    howFull: "How full? (optical depth τ)",
+    tauThin: "thin and pointy",
+    tauMid: "in between",
+    tauThick: "thick and rounded",
+    tauFull: "totally full, flat {edge}",
+    edgeBottom: "bottom",
+    edgeTop: "top",
+    clickHint: "Tip: click on the picture to move your selected line there!",
+    foundCount: "Lines in the right place: {n} / {total}",
+    readyToCheck: " — ready to check!",
+    keepGoing: " — keep going!",
+    check: "Check my answer!",
+    reset: "Start over",
+    fitQuality: "How well does your green curve match? {label}",
+    fitNone: "No lines yet",
+    fitExcellent: "Excellent! 🌟",
+    fitGood: "Good",
+    fitOk: "Getting there",
+    fitPoor: "Not yet",
+    observed: "Measured light",
+    observedRemoved: "Measured light (background removed)",
+    atmosphereData: "Earth's air (in the data)",
+    atmosphereFit: "Computer's air fit",
+    background: "Background",
+    yourModel: "Your lines (green)",
+    axisNm: "Wavelength (nm) — colour of the light",
+    axisGHz: "Frequency (GHz) — radio light",
+    yRaw: "Brightness",
+    yRemoved: "Brightness without background",
+    unknownLine: "Unknown line",
+    greatJob: "Great job, detective! 🎉",
+    almost: "Almost there!",
+    passedLead: "You solved Level {n}: {name}",
+    failedLead: "{n} of {total} lines are in the right place. Move the others a little and try again!",
+    theLine: "Line",
+    realPlace: "Real place",
+    yourPlace: "Your place",
+    ok: "OK?",
+    hear: "Listen",
+    play: "▶ Play",
+    hearYourFit: "🎵 Listen to your lines",
+    playAll: "Play all together",
+    playing: "Playing…",
+    audioBlocked: "Press Play again if you hear nothing.",
+    sonifyWindow: "Light waves wiggle far too fast to hear, so we squeezed this part of the spectrum into two octaves of a piano: higher frequency → higher note.",
+    yourName: "Your name",
+    saveName: "Add me to the hall of fame",
+    enterName: "Type your name first (up to {max} letters).",
+    saved: "Saved! You are number {rank} on Level {level}.",
+    notTop: "Great try — not in the top {n} yet. Play again for more stars!",
+    facts: "Did you know?",
+    tryAgain: "Try again",
+    nextLevel: "Next level ➜",
+    lastLevel: "Back to start",
+    exit: "Finish",
+    thanks: "Thanks for playing!",
+    thanksText: "You are a real spectrum detective now.",
+    backToStart: "Back to start",
+    stars: "{n} of 5 stars",
+    nudgeDown: "Smaller",
+    nudgeUp: "Bigger",
+    mascotName: "Specky",
+    mascotHello: "Hi, I'm Specky! First, ask the computer to find the smooth background.",
+    mascotFitting: "Beep boop… the computer is trying lots of curves!",
+    mascotFitted: "Nice fit! Now make the background disappear.",
+    mascotStartAbs: "Your turn! Click on a dark dip in the picture.",
+    mascotStartEm: "Your turn! Click on a bright bump in the picture.",
+    mascotSome: "{n} found! Keep hunting, detective!",
+    mascotReady: "You found them all! Press “Check my answer!”",
+    mascotStars5: "WOW! Perfect detective work!",
+    mascotStars3: "Super! You have sharp eyes.",
+    mascotStars1: "You did it! Play again for more stars.",
+    mascotFailed: "Don't give up! Move the ❌ lines a little.",
+    hot: "🔥 Hot!",
+    warm: "♨️ Warm",
+    cool: "🌤️ Cool",
+    cold: "❄️ Cold",
+    stickerBook: "Sticker book",
+    stickerCount: "{n} of {total} collected",
+    stickerIntro: "Solve levels to collect every atom and molecule!",
+    newSticker: "🎁 New sticker!",
+    journey: "Your space journey",
+    chapterSun: "The Sun",
+    chapterSunDesc: "dark lines in the Sun's rainbow",
+    chapterAir: "Earth's air",
+    chapterAirDesc: "our own air sneaks into the sunlight",
+    chapterCloud: "Space clouds",
+    chapterCloudDesc: "bright radio lines from cold clouds",
+    nextStop: "Next stop!",
+    quizStart: "🎵 Guess the molecule by its song",
+    quizTitle: "Guess the molecule by its song",
+    quizIntro: "Every line sings its own note. Listen to the mystery note, then tap the one that sings it!",
+    quizHintSolar: "In sunlight, the high notes are on the violet (left) side.",
+    quizHintRadio: "In radio light, the high notes are on the right side.",
+    quizPlay: "▶ Play the mystery note",
+    quizRight: "Yes! That was {name}!",
+    quizWrong: "Not that one — it sounds like this. Listen again!",
+    quizNext: "Next song ➜",
+    quizScore: "Right on the first try: {n} of {total}",
+    quizMuted: "Turn the sound on to play this game!",
+    quizAxisSound: "Note you hear (Hz)",
+  },
+  de: {
+    appTitle: "Spektrum-Detektiv",
+    tagline: "Finde die versteckten Linien im Sternenlicht!",
+    howto1: "Licht von der Sonne und von Wolken im Weltall hat ein glattes Leuchten mit ein paar besonderen Linien darin.",
+    howto2: "Zuerst findet der Computer das glatte Leuchten – und entfernt es.",
+    howto3: "Dann findest DU die Linien: Klicke dorthin, wo ein Tal oder ein Berg ist, und mach deine Linie so tief und breit wie die echte.",
+    howto4: "Drücke „Prüfe meine Antwort!“ und hör dir die Linien als Musik an.",
+    start: "Mit Level 1 starten",
+    orPick: "…oder such dir unten ein Level aus.",
+    chooseLevel: "Wähle ein Level",
+    trackSolar: "Sonnenlicht",
+    trackSolarDesc: "dunkle Linien im Regenbogen der Sonne",
+    trackDust: "Radiowolken",
+    trackDustDesc: "helle Linien aus kalten Wolken im Weltall",
+    linesToFind: "{n} Linien zu finden",
+    lineToFind: "1 Linie zu finden",
+    notPlayed: "Noch nicht gespielt",
+    best: "Beste: {name}",
+    leaderboard: "Ruhmeshalle",
+    leaderboardIntro: "Die besten Detektive auf diesem Computer.",
+    resetLeaderboard: "Ruhmeshalle leeren",
+    resetConfirm: "Ruhmeshalle und Stickeralbum auf diesem Computer leeren? Alle Namen und Sticker werden gelöscht.",
+    noScores: "Noch keine Namen – sei die oder der Erste!",
+    learnMore: "Willst du mehr wissen?",
+    learnMoreText: "Die dunklen Linien der Sonne hat Joseph von Fraunhofer 1814 zum ersten Mal genau vermessen. Die Radiolinien stammen aus der Kölner Datenbank für Molekülspektroskopie (CDMS).",
+    qrAlt: "QR-Code zur CDMS-Webseite",
+    home: "Start",
+    vol: "Lautst.",
+    volume: "Lautstärke",
+    mute: "Ton aus",
+    unmute: "Ton an",
+    language: "Sprache",
+    level: "Level {n}",
+    absorption: "Dunkle Linien",
+    emission: "Helle Linien",
+    step1: "Schritt 1 · Der Hintergrund",
+    step2: "Schritt 2 · Finde die Linien",
+    bgExplainSolar: "Die glatte Kurve ist das Leuchten der Sonne. Ihre Form verrät, wie heiß die Sonne ist.",
+    bgExplainDust: "Der ansteigende Hintergrund ist kalter Staub im Weltall, der im Radiolicht leuchtet.",
+    bgExplainAtmos: "Die orangen Täler macht der Sauerstoff in der Luft der Erde – nicht die Sonne!",
+    fitBg: "🤖 Computer, finde den Hintergrund!",
+    fitting: "Der Computer denkt nach…",
+    bgFitted: "Fertig! Die graue gestrichelte Kurve folgt jetzt dem Hintergrund.",
+    removeBg: "✨ Weg damit!",
+    removed: "Hintergrund entfernt – jetzt sind nur noch die Linien übrig.",
+    before: "Vorher zeigen",
+    after: "Nachher zeigen",
+    locked: "Mach zuerst Schritt 1.",
+    addLine: "+ Linie dazu",
+    lineN: "Linie {n}",
+    selected: "ausgewählt",
+    removeLine: "✕ Löschen",
+    linesCount: "Linien: {n} / {max}",
+    where: "Wo ist sie?",
+    howDeep: "Wie tief?",
+    howBright: "Wie hell?",
+    howWide: "Wie breit?",
+    howFull: "Wie voll? (optische Tiefe τ)",
+    tauThin: "dünn und spitz",
+    tauMid: "mittel",
+    tauThick: "dick und rund",
+    tauFull: "ganz voll, flacher {edge}",
+    edgeBottom: "Boden",
+    edgeTop: "Gipfel",
+    clickHint: "Tipp: Klicke auf das Bild, um deine ausgewählte Linie dorthin zu schieben!",
+    foundCount: "Linien an der richtigen Stelle: {n} / {total}",
+    readyToCheck: " – bereit zum Prüfen!",
+    keepGoing: " – weiter so!",
+    check: "Prüfe meine Antwort!",
+    reset: "Neu anfangen",
+    fitQuality: "Wie gut passt deine grüne Kurve? {label}",
+    fitNone: "Noch keine Linien",
+    fitExcellent: "Super! 🌟",
+    fitGood: "Gut",
+    fitOk: "Fast",
+    fitPoor: "Noch nicht",
+    observed: "Gemessenes Licht",
+    observedRemoved: "Gemessenes Licht (ohne Hintergrund)",
+    atmosphereData: "Luft der Erde (in den Daten)",
+    atmosphereFit: "Luft-Fit vom Computer",
+    background: "Hintergrund",
+    yourModel: "Deine Linien (grün)",
+    axisNm: "Wellenlänge (nm) – Farbe des Lichts",
+    axisGHz: "Frequenz (GHz) – Radiolicht",
+    yRaw: "Helligkeit",
+    yRemoved: "Helligkeit ohne Hintergrund",
+    unknownLine: "Unbekannte Linie",
+    greatJob: "Super gemacht, Detektiv! 🎉",
+    almost: "Fast geschafft!",
+    passedLead: "Du hast Level {n} gelöst: {name}",
+    failedLead: "{n} von {total} Linien sind an der richtigen Stelle. Schieb die anderen ein bisschen und versuch es nochmal!",
+    theLine: "Linie",
+    realPlace: "Echte Stelle",
+    yourPlace: "Deine Stelle",
+    ok: "OK?",
+    hear: "Anhören",
+    play: "▶ Spielen",
+    hearYourFit: "🎵 Hör dir deine Linien an",
+    playAll: "Alle zusammen spielen",
+    playing: "Spielt…",
+    audioBlocked: "Drück nochmal auf Spielen, wenn du nichts hörst.",
+    sonifyWindow: "Lichtwellen schwingen viel zu schnell zum Hören. Deshalb haben wir dieses Stück Spektrum auf zwei Oktaven eines Klaviers zusammengedrückt: höhere Frequenz → höherer Ton.",
+    yourName: "Dein Name",
+    saveName: "Trag mich in die Ruhmeshalle ein",
+    enterName: "Schreib zuerst deinen Namen (bis zu {max} Buchstaben).",
+    saved: "Gespeichert! Du bist Nummer {rank} in Level {level}.",
+    notTop: "Toller Versuch – noch nicht unter den besten {n}. Spiel nochmal für mehr Sterne!",
+    facts: "Wusstest du schon?",
+    tryAgain: "Nochmal versuchen",
+    nextLevel: "Nächstes Level ➜",
+    lastLevel: "Zurück zum Start",
+    exit: "Beenden",
+    thanks: "Danke fürs Spielen!",
+    thanksText: "Jetzt bist du ein echter Spektrum-Detektiv.",
+    backToStart: "Zurück zum Start",
+    stars: "{n} von 5 Sternen",
+    nudgeDown: "Kleiner",
+    nudgeUp: "Größer",
+    mascotName: "Specky",
+    mascotHello: "Hallo, ich bin Specky! Frag zuerst den Computer nach dem glatten Hintergrund.",
+    mascotFitting: "Piep piep… der Computer probiert ganz viele Kurven aus!",
+    mascotFitted: "Gut gepasst! Jetzt lass den Hintergrund verschwinden.",
+    mascotStartAbs: "Jetzt du! Klicke auf ein dunkles Tal im Bild.",
+    mascotStartEm: "Jetzt du! Klicke auf einen hellen Berg im Bild.",
+    mascotSome: "{n} gefunden! Such weiter, Detektiv!",
+    mascotReady: "Du hast alle gefunden! Drück „Prüfe meine Antwort!“",
+    mascotStars5: "WOW! Perfekte Detektivarbeit!",
+    mascotStars3: "Super! Du hast scharfe Augen.",
+    mascotStars1: "Geschafft! Spiel nochmal für mehr Sterne.",
+    mascotFailed: "Nicht aufgeben! Schieb die ❌-Linien ein bisschen.",
+    hot: "🔥 Heiß!",
+    warm: "♨️ Warm",
+    cool: "🌤️ Kühl",
+    cold: "❄️ Kalt",
+    stickerBook: "Stickeralbum",
+    stickerCount: "{n} von {total} gesammelt",
+    stickerIntro: "Löse Level, um jedes Atom und Molekül zu sammeln!",
+    newSticker: "🎁 Neuer Sticker!",
+    journey: "Deine Reise durchs Weltall",
+    chapterSun: "Die Sonne",
+    chapterSunDesc: "dunkle Linien im Regenbogen der Sonne",
+    chapterAir: "Die Luft der Erde",
+    chapterAirDesc: "unsere eigene Luft schleicht sich ins Sonnenlicht",
+    chapterCloud: "Wolken im Weltall",
+    chapterCloudDesc: "helle Radiolinien aus kalten Wolken",
+    nextStop: "Nächster Halt!",
+    quizStart: "🎵 Errate das Molekül an seinem Lied",
+    quizTitle: "Errate das Molekül an seinem Lied",
+    quizIntro: "Jede Linie singt ihren eigenen Ton. Hör dir den geheimen Ton an und tippe auf die Linie, die ihn singt!",
+    quizHintSolar: "Im Sonnenlicht sind die hohen Töne auf der violetten (linken) Seite.",
+    quizHintRadio: "Im Radiolicht sind die hohen Töne auf der rechten Seite.",
+    quizPlay: "▶ Geheimen Ton spielen",
+    quizRight: "Ja! Das war {name}!",
+    quizWrong: "Nicht die – die klingt so. Hör nochmal hin!",
+    quizNext: "Nächstes Lied ➜",
+    quizScore: "Beim ersten Versuch richtig: {n} von {total}",
+    quizMuted: "Mach den Ton an, um dieses Spiel zu spielen!",
+    quizAxisSound: "Ton, den du hörst (Hz)",
+  },
+};
+
+let LANG = (() => {
+  try {
+    return localStorage.getItem(LANG_KEY) === "de" ? "de" : "en";
+  } catch (e) {
+    return "en";
+  }
+})();
+
+function setLang(lang) {
+  LANG = lang === "de" ? "de" : "en";
+  document.documentElement.lang = LANG;
+  try {
+    localStorage.setItem(LANG_KEY, LANG);
+  } catch (e) {}
+}
+
+/** Translate a UI key, filling {placeholders} from vars. */
+function t(key, vars) {
+  const s = STRINGS[LANG][key] != null ? STRINGS[LANG][key] : STRINGS.en[key] != null ? STRINGS.en[key] : key;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m)) : s;
+}
+
+/** Pick the current language out of an { en, de } object (plain strings pass through). */
+function tx(obj) {
+  if (obj == null || typeof obj === "string") return obj || "";
+  return obj[LANG] || obj.en || "";
+}
 
 const AXES = {
   GHz: {
@@ -277,10 +635,10 @@ function baselineResidualPercent(spectrum, continuum, telluricComponents, scienc
 function continuumDefaults(level) {
   const c = continuumSpec(level);
   if (c.type === "solar") {
-    return { type: "solar", temperatureK: 5000, airmass: 1.6 };
+    return { type: "solar", temperatureK: 4000, airmass: 2.5 };
   }
   if (c.type === "powerLaw") {
-    return { type: "powerLaw", refBrightnessK: c.refBrightnessK, index: 1.5 };
+    return { type: "powerLaw", refBrightnessK: c.refBrightnessK, index: 1 };
   }
   return { type: "flat", c0: c.c0 };
 }
@@ -350,21 +708,82 @@ function levelResolution(level) {
   };
 }
 
+/**
+ * The computer's starting guess for Earth's own lines: it knows where oxygen absorbs (the
+ * catalogue wavelength, as a real reduction pipeline does), but not yet how deep or wide.
+ */
 function seedTelluricComponents(level) {
-  const mid = (level.xMin + level.xMax) / 2;
-  const span = level.xMax - level.xMin;
-  const defs = componentDefaults(level);
-  return telluricLinesOf(level.trueLines).map((line, i) => {
-    const stagger = ((i % 5) - 2) * span * 0.02;
-    return {
-      id: 1000 + i,
-      amplitude: defs.amplitude,
-      center: Math.min(level.xMax, Math.max(level.xMin, mid + stagger)),
-      sigma: defs.sigma,
-      tau: defs.tau,
-      role: "telluric",
-    };
+  return telluricLinesOf(level.trueLines).map((line, i) => ({
+    id: 1000 + i,
+    amplitude: 0.02,
+    center: line.center,
+    sigma: line.sigma * 0.6,
+    tau: line.tau,
+    role: "telluric",
+  }));
+}
+
+/**
+ * The computer's own background fit: coordinate descent on the existing baseline residual,
+ * over the continuum shape and each telluric line's depth and width.
+ * ponytail: coordinate descent over at most ~6 params on a thinned spectrum; switch to
+ * Levenberg–Marquardt if windows get wider or parameters multiply.
+ * @returns {{ continuum: ContinuumSpec; tellurics: PlayerComponent[] }}
+ */
+function autoFitBaseline(spectrum, level, startContinuum, startTellurics) {
+  const science = scienceLinesOf(level.trueLines);
+  const stride = Math.max(1, Math.floor(spectrum.x.length / 800));
+  const thin = {
+    x: spectrum.x.filter((_, i) => i % stride === 0),
+    y: spectrum.y.filter((_, i) => i % stride === 0),
+  };
+  const params = [];
+  if (startContinuum.type === "solar") {
+    params.push({ key: "temperatureK", min: 3000, max: 12000, step: 800 });
+    params.push({ key: "airmass", min: 0.3, max: 4, step: 0.4 });
+  } else if (startContinuum.type === "powerLaw") {
+    params.push({ key: "index", min: -1, max: 6, step: 0.8 });
+  }
+  const sigmaMax = (level.xMax - level.xMin) / 10;
+  startTellurics.forEach((_, i) => {
+    params.push({ tel: i, key: "amplitude", min: 0.01, max: 1, step: 0.15 });
+    params.push({ tel: i, key: "sigma", min: sigmaMax / 100, max: sigmaMax, step: sigmaMax / 8 });
   });
+  const read = (s, p) => (p.tel == null ? s.c[p.key] : s.t[p.tel][p.key]);
+  const cost = (s) =>
+    baselineResidualPercent(thin, s.c, s.t, science, level.mode, level.xMin, level.xMax);
+  let best = { c: { ...startContinuum }, t: startTellurics.map((x) => ({ ...x })) };
+  let bestCost = cost(best);
+  for (let iter = 0; iter < 200; iter++) {
+    if (!params.some((p) => p.step > 1e-4 * (p.max - p.min))) break;
+    for (const p of params) {
+      let improved = false;
+      for (const dir of [1, -1]) {
+        const trial = { c: { ...best.c }, t: best.t.map((x) => ({ ...x })) };
+        const v = Math.min(p.max, Math.max(p.min, read(best, p) + dir * p.step));
+        if (p.tel == null) trial.c[p.key] = v;
+        else trial.t[p.tel][p.key] = v;
+        const c = cost(trial);
+        if (c < bestCost) {
+          best = trial;
+          bestCost = c;
+          improved = true;
+          break;
+        }
+      }
+      if (!improved) p.step /= 2;
+    }
+  }
+  return { continuum: best.c, tellurics: best.t };
+}
+
+/** Linear blend of two parameter objects, for animating the computer's fit. */
+function lerpParams(a, b, f) {
+  const out = { ...b };
+  for (const k of Object.keys(b)) {
+    if (typeof b[k] === "number" && typeof a[k] === "number") out[k] = a[k] + (b[k] - a[k]) * f;
+  }
+  return out;
 }
 
 function meanSquaredError(yTrue, yPred) {
@@ -398,11 +817,11 @@ function normalizedFitPercent(yTrue, yPred) {
 }
 
 function describeFitQuality(fitPct) {
-  if (!isFinite(fitPct)) return { label: "No fit yet", cls: "" };
-  if (fitPct < 3) return { label: "Excellent match", cls: "good" };
-  if (fitPct < 8) return { label: "Good match", cls: "good" };
-  if (fitPct < 15) return { label: "Reasonable match", cls: "ok" };
-  return { label: "Poor match", cls: "bad" };
+  if (!isFinite(fitPct)) return { label: t("fitNone"), cls: "" };
+  if (fitPct < 3) return { label: t("fitExcellent"), cls: "good" };
+  if (fitPct < 8) return { label: t("fitGood"), cls: "good" };
+  if (fitPct < 15) return { label: t("fitOk"), cls: "ok" };
+  return { label: t("fitPoor"), cls: "bad" };
 }
 
 function linspace(min, max, n) {
@@ -477,33 +896,12 @@ function computeLineErrors(trueLines, playerComponents) {
   });
 }
 
+/** "Calcium (Ca II K)" — the everyday name first, the astronomer's label after it. */
 function lineSpeciesLabel(line) {
-  if (!line || !line.knownLine) return "Unknown line";
-  if (line.transition) return line.label + " " + line.transition;
-  return line.label || "—";
-}
-
-/** Credit for the weak lines: fitting them is optional, so say what was caught. */
-function describeBonusLines(summary) {
-  if (!summary || !summary.extraLineCount) return "";
-  const caught = summary.bonusErrors || [];
-  if (!caught.length) {
-    return (
-      "This level also draws " +
-      summary.extraLineCount +
-      (summary.extraLineCount === 1 ? " weaker line" : " weaker lines") +
-      " that are not scored. There are enough lines for those too — try fitting them as well."
-    );
-  }
-  return (
-    "Bonus: you also fitted " +
-    caught.length +
-    " of the " +
-    summary.extraLineCount +
-    " unscored lines — " +
-    caught.map((le) => lineSpeciesLabel(le.line)).join(", ") +
-    "."
-  );
+  if (!line || !line.knownLine) return t("unknownLine");
+  const species = SPECIES[line.label];
+  const code = line.transition ? line.label + " " + line.transition : line.label;
+  return species ? tx(species.name) + " (" + code + ")" : code || "—";
 }
 
 function meanPercentError(lineErrors) {
@@ -583,6 +981,23 @@ function sonifyAxisValues(axisValues, level) {
   const values = axisValues || [];
   const originalHz = values.map((v) => (v == null || !isFinite(v) ? NaN : axis.toHz(v)));
 
+  if (mode === "window") {
+    // The whole window becomes two piano octaves: easy to hear, higher frequency → higher note.
+    const edgeA = axis.toHz(level.xMin);
+    const edgeB = axis.toHz(level.xMax);
+    const lo = Math.min(edgeA, edgeB);
+    const hi = Math.max(edgeA, edgeB);
+    return {
+      mode: "window",
+      unit: axisKey,
+      audibleHz: originalHz.map((hz) =>
+        isFinite(hz) ? WINDOW_LOW_HZ * Math.pow(4, (hz - lo) / (hi - lo)) : NaN
+      ),
+      originalHz,
+      scaleFactor: NaN,
+    };
+  }
+
   if (mode === "ratio") {
     const edgeA = axis.toHz(level.xMin);
     const edgeB = axis.toHz(level.xMax);
@@ -640,6 +1055,7 @@ function sonifyAxisValues(axisValues, level) {
 /** One sentence describing which sonification rule produced these notes. */
 function describeSonifyRule(sonification) {
   if (!sonification) return "";
+  if (sonification.mode === "window") return t("sonifyWindow");
   if (sonification.mode === "ratio") {
     return (
       "Every frequency was divided by the same number (" +
@@ -799,6 +1215,36 @@ async function playChord(hzList, durationSec, muted) {
   return started;
 }
 
+/**
+ * Short game sounds on the master gain (so mute and volume apply):
+ * "ding" = a line landed in place, "win" = level solved, "miss" = not yet.
+ */
+async function playSfx(kind) {
+  if (globalMuted) return;
+  const ctx = await ensureAudioReady();
+  if (!ctx || !masterGainNode) return;
+  const now = ctx.currentTime;
+  const notes = {
+    ding: [[1046, 1046, 0, 0.18]],
+    win: [[523, 523, 0, 0.14], [659, 659, 0.12, 0.14], [784, 784, 0.24, 0.14], [1046, 1046, 0.36, 0.4]],
+    miss: [[330, 150, 0, 0.45]],
+  }[kind];
+  (notes || []).forEach(([fromHz, toHz, at, dur]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = kind === "miss" ? "triangle" : "sine";
+    osc.frequency.setValueAtTime(fromHz, now + at);
+    osc.frequency.exponentialRampToValueAtTime(toHz, now + at + dur);
+    gain.gain.setValueAtTime(0, now + at);
+    gain.gain.linearRampToValueAtTime(0.25, now + at + 0.02);
+    gain.gain.linearRampToValueAtTime(0, now + at + dur);
+    osc.connect(gain);
+    gain.connect(masterGainNode);
+    osc.start(now + at);
+    osc.stop(now + at + dur + 0.05);
+  });
+}
+
 // ——— CDMS catalog & facts ———
 
 /** Radio rest frequencies in GHz, curated from CDMS. */
@@ -881,35 +1327,104 @@ const FRAUNHOFER_CATALOG = [
   { value: 759.370, species: "O2", transition: "A (telluric)" },
 ];
 
-const MOLECULE_FACTS = {
-  HCN: "Hydrogen cyanide (HCN) is common in dense molecular clouds and traces warm gas near young stars.",
-  "HCO+": "The formyl ion (HCO+) is a key tracer of dense, ionized gas in star-forming regions.",
-  "H13CO+": "H¹³CO⁺ is the rare-carbon version of HCO⁺; it stays optically thin where the main line is saturated.",
-  HNC: "Hydrogen isocyanide (HNC) has the same atoms as HCN but a different order; the ratio of the two is a cloud thermometer.",
-  "N2H+": "Diazenylium (N2H+) survives where CO freezes out, so it maps the coldest, densest cloud cores.",
-  CS: "Carbon monosulfide (CS) is a dense-gas tracer found in molecular clouds and protostellar envelopes.",
-  C34S: "C³⁴S is a rarer sulfur isotope of CS; comparing isotopes helps measure how opaque a cloud is.",
-  SO: "Sulfur monoxide (SO) often brightens in shocked gas, for example where outflows slam into cloud material.",
-  SiO: "Silicon monoxide (SiO) is locked into dust grains until a shock smashes them, so it lights up jets and outflows.",
-  C2H: "The ethynyl radical (C2H) thrives in gas lit by ultraviolet starlight, at the edges of clouds.",
-  HC3N: "Cyanoacetylene (HC3N) is one of the longer carbon chains found in space and marks warm, chemically rich cores.",
-  CO: "Carbon monoxide (CO) is the most widely used tracer of molecular gas across the Milky Way and beyond.",
-  "13CO": "¹³CO is a less abundant CO isotope; it stays optically thinner and probes denser gas than main-line CO.",
-  C18O: "C¹⁸O is even rarer than ¹³CO and is used to weigh the densest parts of molecular clouds.",
-  CN: "The cyano radical (CN) is seen in UV-irradiated cloud edges and helps probe chemistry near starlight.",
-  H2CO: "Formaldehyde (H₂CO) appears in many environments, from cold clouds to comets and star-forming regions.",
-  CH3OH: "Methanol (CH₃OH) is a complex organic molecule linked to ice chemistry on dust grains.",
-  H2O: "Water vapour lines are blocked by our own atmosphere, so the 557 GHz line had to be observed from space by Herschel.",
-  NH3: "Ammonia (NH₃) was among the first molecules found in space and is still a favourite gas thermometer.",
-  CI: "Neutral atomic carbon marks the layer where ultraviolet light has broken CO apart.",
-  "Ca II": "Singly ionized calcium produces the H and K lines, the strongest dark features in the violet part of the solar spectrum.",
-  "H I": "Hydrogen's Balmer lines (H-alpha, H-beta, ...) come from the most abundant element in the Universe.",
-  "Na I": "Sodium's D lines are the same yellow glow as a street lamp — and in the Sun they appear as two dark lines.",
-  "Mg I": "Neutral magnesium makes the b triplet in the green; it is a favourite for measuring solar magnetic fields.",
-  "Fe I": "Iron alone contributes thousands of lines to the solar spectrum, which is why the Sun's rainbow looks so ragged.",
-  "Ca I": "Neutral calcium blends with iron in the G band, one of the features Fraunhofer catalogued in 1814.",
-  "He I": "Helium was discovered in the Sun before it was found on Earth — hence the name, from Helios.",
-  O2: "This line is not solar at all: oxygen in our own atmosphere absorbs the sunlight on its way to the telescope.",
+/** Everyday names, a sticker character (emoji + nickname) and a fun fact for every species the kids' levels use. */
+const SPECIES = {
+  "Ca II": {
+    emoji: "🦴",
+    nick: { en: "Bony Calcium", de: "Knochen-Kalzium" },
+    name: { en: "Calcium", de: "Kalzium" },
+    fact: { en: "Calcium is in your bones and teeth — and it makes the two biggest dark lines in the Sun's violet light.", de: "Kalzium steckt in deinen Knochen und Zähnen – und es macht die zwei größten dunklen Linien im violetten Sonnenlicht." },
+  },
+  "H I": {
+    emoji: "🎈",
+    nick: { en: "Tiny Hydrogen", de: "Winziger Wasserstoff" },
+    name: { en: "Hydrogen", de: "Wasserstoff" },
+    fact: { en: "Hydrogen is the most common stuff in the whole Universe. The Sun is mostly made of it!", de: "Wasserstoff ist der häufigste Stoff im ganzen Universum. Die Sonne besteht zum größten Teil daraus!" },
+  },
+  "Fe I": {
+    emoji: "🔩",
+    nick: { en: "Rusty Iron", de: "Rostiges Eisen" },
+    name: { en: "Iron", de: "Eisen" },
+    fact: { en: "Iron — the metal of nails and bikes — makes thousands of little dark lines in sunlight.", de: "Eisen – das Metall von Nägeln und Fahrrädern – macht Tausende kleine dunkle Linien im Sonnenlicht." },
+  },
+  "Mg I": {
+    emoji: "🎆",
+    nick: { en: "Sparkly Magnesium", de: "Funkel-Magnesium" },
+    name: { en: "Magnesium", de: "Magnesium" },
+    fact: { en: "Magnesium burns with a super-bright white flame. It is used in fireworks and sparklers!", de: "Magnesium brennt mit einer super-hellen weißen Flamme. Man benutzt es in Feuerwerk und Wunderkerzen!" },
+  },
+  "Na I": {
+    emoji: "🧂",
+    nick: { en: "Salty Sodium", de: "Salziges Natrium" },
+    name: { en: "Sodium", de: "Natrium" },
+    fact: { en: "Sodium is half of table salt. It makes old street lamps glow orange-yellow.", de: "Natrium ist die Hälfte von Kochsalz. Es lässt alte Straßenlaternen orange-gelb leuchten." },
+  },
+  O2: {
+    emoji: "🌬️",
+    nick: { en: "Breathy Oxygen", de: "Puste-Sauerstoff" },
+    name: { en: "Oxygen in our air", de: "Sauerstoff in unserer Luft" },
+    fact: { en: "This line is not from the Sun at all: the oxygen you breathe swallows a bit of sunlight before it reaches the telescope.", de: "Diese Linie kommt gar nicht von der Sonne: Der Sauerstoff, den du atmest, schluckt ein bisschen Sonnenlicht, bevor es beim Teleskop ankommt." },
+  },
+  HCN: {
+    emoji: "🧪",
+    nick: { en: "Sneaky HCN", de: "Heimliche Blausäure" },
+    name: { en: "Hydrogen cyanide", de: "Blausäure" },
+    fact: { en: "Hydrogen cyanide is poisonous on Earth, but in space it helps astronomers find places where stars are born.", de: "Blausäure ist auf der Erde giftig, aber im Weltall hilft sie Astronomen, Orte zu finden, an denen Sterne geboren werden." },
+  },
+  "HCO+": {
+    emoji: "⚡",
+    nick: { en: "Zippy Formyl", de: "Flinkes Formyl" },
+    name: { en: "Formyl ion", de: "Formyl-Ion" },
+    fact: { en: "The formyl ion falls apart quickly on Earth, but in cold, empty space it can survive for a very long time.", de: "Das Formyl-Ion zerfällt auf der Erde schnell, aber im kalten, leeren Weltall kann es sehr lange überleben." },
+  },
+  "N2H+": {
+    emoji: "🥶",
+    nick: { en: "Chilly Diazenylium", de: "Bibber-Diazenylium" },
+    name: { en: "Diazenylium", de: "Diazenylium" },
+    fact: { en: "Diazenylium lives in the coldest places in space, about −260 °C, where new stars are just starting to form.", de: "Diazenylium lebt an den kältesten Orten im Weltall, etwa −260 °C, wo gerade neue Sterne entstehen." },
+  },
+  C34S: {
+    emoji: "🏋️",
+    nick: { en: "Heavy Hugo", de: "Schwerer Hugo" },
+    name: { en: "Heavy carbon monosulfide", de: "Schweres Kohlenstoffmonosulfid" },
+    fact: { en: "This is carbon monosulfide with a heavier kind of sulfur. Comparing heavy and light versions tells us how thick a cloud is.", de: "Das ist Kohlenstoffmonosulfid mit einer schwereren Sorte Schwefel. Schwere und leichte Versionen verraten, wie dick eine Wolke ist." },
+  },
+  CS: {
+    emoji: "🧽",
+    nick: { en: "Squeezy CS", de: "Quetsch-CS" },
+    name: { en: "Carbon monosulfide", de: "Kohlenstoffmonosulfid" },
+    fact: { en: "Carbon monosulfide shows astronomers where space clouds are thick and squeezed together.", de: "Kohlenstoffmonosulfid zeigt Astronomen, wo Wolken im Weltall dicht und zusammengedrückt sind." },
+  },
+  SO: {
+    emoji: "🥚",
+    nick: { en: "Stinky SO", de: "Stinke-SO" },
+    name: { en: "Sulfur monoxide", de: "Schwefelmonoxid" },
+    fact: { en: "Sulfur monoxide lights up where fast jets from baby stars crash into the cloud around them.", de: "Schwefelmonoxid leuchtet dort, wo schnelle Strahlen von Baby-Sternen in die Wolke um sie herum krachen." },
+  },
+  C18O: {
+    emoji: "🤿",
+    nick: { en: "Deep-Diver CO", de: "Tiefentaucher-CO" },
+    name: { en: "Carbon monoxide (heavy oxygen)", de: "Kohlenmonoxid (schwerer Sauerstoff)" },
+    fact: { en: "Only about one in 500 oxygen atoms is this heavy kind, so this line is faint — perfect for seeing deep inside clouds.", de: "Nur etwa eins von 500 Sauerstoffatomen ist von dieser schweren Sorte. Die Linie ist deshalb schwach – perfekt, um tief in Wolken hineinzuschauen." },
+  },
+  "13CO": {
+    emoji: "👯",
+    nick: { en: "Twin CO", de: "Zwillings-CO" },
+    name: { en: "Carbon monoxide (heavy carbon)", de: "Kohlenmonoxid (schwerer Kohlenstoff)" },
+    fact: { en: "This carbon monoxide has a slightly heavier carbon atom, so it sings at a slightly different frequency.", de: "Dieses Kohlenmonoxid hat ein etwas schwereres Kohlenstoffatom, darum „singt“ es bei einer etwas anderen Frequenz." },
+  },
+  CN: {
+    emoji: "👴",
+    nick: { en: "Grandpa CN", de: "Opa CN" },
+    name: { en: "Cyanide radical", de: "Cyan-Radikal" },
+    fact: { en: "CN was one of the very first molecules ever found in space, back in 1940!", de: "CN war eines der allerersten Moleküle, die im Weltall entdeckt wurden – schon 1940!" },
+  },
+  CO: {
+    emoji: "👑",
+    nick: { en: "King CO", de: "König CO" },
+    name: { en: "Carbon monoxide", de: "Kohlenmonoxid" },
+    fact: { en: "Carbon monoxide makes the brightest radio line in the sky. Astronomers use it to map the whole Milky Way.", de: "Kohlenmonoxid macht die hellste Radiolinie am Himmel. Astronomen kartieren damit die ganze Milchstraße." },
+  },
 };
 
 function catalogForAxis(axisKey) {
@@ -941,12 +1456,41 @@ function loadLeaderboard() {
   }
 }
 
-/** Clear all named leaderboard scores for this device. */
+/** Clear all named leaderboard scores and collected stickers for this device. */
 function clearLeaderboard() {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STICKER_KEY);
   } catch (e) {}
   return {};
+}
+
+/** Species labels collected in the sticker book on this device. */
+function loadStickers() {
+  try {
+    const list = JSON.parse(localStorage.getItem(STICKER_KEY) || "[]");
+    return Array.isArray(list) ? list.filter((label) => SPECIES[label]) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/** @returns {{ all: string[]; fresh: string[] }} the whole collection and the stickers new this time */
+function addStickers(labels) {
+  const have = loadStickers();
+  const fresh = labels.filter((label) => SPECIES[label] && !have.includes(label));
+  const all = have.concat(fresh);
+  try {
+    localStorage.setItem(STICKER_KEY, JSON.stringify(all));
+  } catch (e) {}
+  return { all, fresh };
+}
+
+/** Every species a level shows: its science lines, plus Earth's oxygen on telluric levels. */
+function levelSpecies(level) {
+  const labels = scienceLinesOf(level.trueLines).map((l) => l.label);
+  if (telluricLinesOf(level.trueLines).length) labels.push("O2");
+  return labels.filter((label, i) => SPECIES[label] && labels.indexOf(label) === i);
 }
 
 function sanitizePlayerName(name) {
@@ -999,447 +1543,254 @@ function saveLeaderboardEntry(levelId, name, mse, meanErr, stars) {
 }
 
 const TRACKS = [
-  { key: "radio", label: "Radio", source: "cdms" },
-  { key: "solar", label: "Solar", source: "fraunhofer" },
+  { key: "solar", label: "trackSolar", desc: "trackSolarDesc" },
+  { key: "dust", label: "trackDust", desc: "trackDustDesc" },
 ];
 
-/** @type {LevelConfig[]} */
+const SOLAR_CONTINUUM = { type: "solar", temperatureK: SUN_TEFF_K, airmass: 1.15 };
+const DUST_CONTINUUM = { type: "powerLaw", refBrightnessK: 0.85, index: 4.0 };
+/** Every level passes when each centre is within this fraction of the window width. */
+const PASS_FRACTION_OF_WINDOW = 0.02;
+
+/** Shared settings for a kids' window, so all ten levels are equally hard. */
+function kidsLevel(cfg) {
+  const solar = cfg.track === "solar";
+  const mid = (cfg.xMin + cfg.xMax) / 2;
+  return Object.assign(
+    {
+      mode: solar ? "absorption" : "emission",
+      axis: solar ? "nm" : "GHz",
+      sonify: "window",
+      noiseLevel: solar ? 0.012 : 0.05,
+      baseline: solar ? 1 : 0.6,
+      continuum: solar ? SOLAR_CONTINUUM : DUST_CONTINUUM,
+      showSpectrumColors: solar,
+      errorThresholdPercent: ((PASS_FRACTION_OF_WINDOW * (cfg.xMax - cfg.xMin)) / mid) * 100,
+    },
+    cfg
+  );
+}
+
+/**
+ * Ten windows with at most three features each, cut from the old Level 10 (solar, 380–700 nm)
+ * and Level 13 (dust continuum, 88–116 GHz). Line data is the real Fraunhofer / CDMS values;
+ * the radio widths are a little broader so the peaks are easy to see.
+ * @type {LevelConfig[]}
+ */
 const LEVELS = [
-  {
+  kidsLevel({
     id: 1,
-    name: "Level 1 – Warm-up",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb: "Two dense-gas tracers, overlapping just enough to matter. Start here.",
-    xMin: 86,
-    xMax: 95,
-    noiseLevel: 0.08,
-    baseline: 0.3,
-    errorThresholdPercent: 0.3,
-    trueLines: [
-      { amplitude: 3.2, center: 88.631847, sigma: 0.19, tau: 0.5, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 2.9, center: 89.188523, sigma: 0.2, tau: 0.35, knownLine: true, label: "HCO+", transition: "J=1-0" },
-    ],
-  },
-  {
-    id: 2,
-    name: "Level 2 – Blended",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb:
-      "Five clear peaks across nine gigahertz. An unidentified shoulder sits on C34S — fitting that extra blend is optional bonus, not required to pass.",
-    xMin: 93,
-    xMax: 102,
-    noiseLevel: 0.2,
-    baseline: 0.5,
-    errorThresholdPercent: 0.5,
-    trueLines: [
-      { amplitude: 1.6, center: 93.173764, sigma: 0.35, tau: 0.3, knownLine: true, label: "N2H+", transition: "J=1-0" },
-      { amplitude: 2.4, center: 96.412950, sigma: 0.28, tau: 0.5, knownLine: true, label: "C34S", transition: "J=2-1" },
-      // Merged into the C34S bump — drawn for realism, not required to pass.
-      { amplitude: 1.2, center: 96.741375, sigma: 0.26, tau: 0.3, knownLine: false, graded: false },
-      { amplitude: 3.0, center: 97.980953, sigma: 0.32, tau: 1.6, knownLine: true, label: "CS", transition: "J=2-1" },
-      { amplitude: 2.6, center: 99.299870, sigma: 0.24, tau: 0.8, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
-      { amplitude: 0.9, center: 100.076392, sigma: 0.22, tau: 0.25, knownLine: true, label: "HC3N", transition: "J=11-10" },
-    ],
-  },
-  {
-    id: 3,
-    name: "Level 3 – Crowded",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb:
-      "Four clear peaks: a blended formaldehyde bump, C18O, 13CO, and saturated CO. Splitting the formaldehyde blend into two centres is optional bonus.",
-    xMin: 217,
-    xMax: 235,
-    noiseLevel: 0.32,
-    baseline: 0.65,
-    errorThresholdPercent: 0.25,
-    trueLines: [
-      { amplitude: 2.5, center: 218.222192, sigma: 0.28, tau: 0.8, knownLine: true, label: "H2CO", transition: "3(0,3)-2(0,2)" },
-      // Same bump as H2CO (~1 σ apart) — drawn as a blend, not required to pass.
-      { amplitude: 2.7, center: 218.475632, sigma: 0.28, tau: 0.8, knownLine: false, graded: false },
-      { amplitude: 2.2, center: 219.560319, sigma: 0.26, tau: 0.5, knownLine: true, label: "C18O", transition: "J=2-1" },
-      { amplitude: 2.6, center: 220.398684, sigma: 0.26, tau: 1.2, knownLine: true, label: "13CO", transition: "J=2-1" },
-      { amplitude: 4.0, center: 230.538000, sigma: 0.5, tau: 4.0, knownLine: true, label: "CO", transition: "J=2-1" },
-    ],
-  },
-  {
-    id: 4,
-    name: "Level 4 – 3 mm band",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb: "The classic CO isotope trio, plus a mystery line and a saturated main CO line.",
-    xMin: 108,
-    xMax: 117,
-    noiseLevel: 0.24,
-    baseline: 0.55,
-    errorThresholdPercent: 0.25,
-    trueLines: [
-      { amplitude: 2.4, center: 109.782173, sigma: 0.13, tau: 0.4, knownLine: true, label: "C18O", transition: "J=1-0" },
-      { amplitude: 3.0, center: 110.201354, sigma: 0.13, tau: 1.0, knownLine: true, label: "13CO", transition: "J=1-0" },
-      { amplitude: 2.0, center: 113.490982, sigma: 0.22, tau: 0.5, knownLine: false },
-      { amplitude: 4.2, center: 115.271202, sigma: 0.25, tau: 4.5, knownLine: true, label: "CO", transition: "J=1-0" },
-    ],
-  },
-  {
-    id: 5,
-    name: "Level 5 – Submm blend",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb:
-      "Three clear peaks: CO, an unidentified U-line, and CS. A weaker shoulder on CS is drawn for realism but is optional bonus.",
-    xMin: 228,
-    xMax: 246,
-    noiseLevel: 0.36,
-    baseline: 0.7,
-    errorThresholdPercent: 0.3,
-    trueLines: [
-      { amplitude: 3.6, center: 230.538000, sigma: 0.5, tau: 3.0, knownLine: true, label: "CO", transition: "J=2-1" },
-      { amplitude: 1.4, center: 241.616183, sigma: 0.4, tau: 0.3, knownLine: false },
-      // Merged into the CS bump — not a separate visible peak.
-      { amplitude: 0.9, center: 244.55, sigma: 0.38, tau: 0.2, knownLine: false, graded: false },
-      { amplitude: 2.4, center: 244.935557, sigma: 0.42, tau: 1.0, knownLine: true, label: "CS", transition: "J=5-4" },
-    ],
-  },
-  {
-    id: 6,
-    name: "Level 6 – Dense tracers",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb: "HCN and HCO+ at J=3-2, both optically thick, plus HNC and one unknown.",
-    xMin: 263,
-    xMax: 282,
-    noiseLevel: 0.4,
-    baseline: 0.75,
-    errorThresholdPercent: 0.25,
-    trueLines: [
-      { amplitude: 3.2, center: 265.886434, sigma: 0.35, tau: 2.5, knownLine: true, label: "HCN", transition: "J=3-2" },
-      { amplitude: 2.8, center: 267.557619, sigma: 0.32, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=3-2" },
-      { amplitude: 1.6, center: 271.981142, sigma: 0.32, tau: 0.5, knownLine: true, label: "HNC", transition: "J=3-2" },
-      { amplitude: 2.1, center: 279.511701, sigma: 0.35, tau: 0.6, knownLine: false },
-    ],
-  },
-  {
-    id: 7,
-    name: "Level 7 – Wide 3 mm scan",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "ratio",
-    blurb:
-      "Sixteen lines across 32 GHz, from CO twenty times brighter than the weakest feature. Every line counts — use the log button to stretch the faint forest.",
-    xMin: 84,
-    xMax: 116,
-    noiseLevel: 0.05,
-    baseline: 0.12,
-    errorThresholdPercent: 0.2,
-    allowLogY: true,
-    trueLines: [
-      { amplitude: 0.25, center: 86.243442, sigma: 0.11, tau: 0.2, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
-      { amplitude: 0.18, center: 86.754294, sigma: 0.1, tau: 0.2, knownLine: true, label: "H13CO+", transition: "J=1-0" },
-      { amplitude: 0.55, center: 87.316898, sigma: 0.12, tau: 0.3, knownLine: true, label: "C2H", transition: "N=1-0" },
-      { amplitude: 2.6, center: 88.631847, sigma: 0.12, tau: 2.0, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 2.2, center: 89.188523, sigma: 0.11, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
-      { amplitude: 0.9, center: 90.663568, sigma: 0.11, tau: 0.5, knownLine: true, label: "HNC", transition: "J=1-0" },
-      { amplitude: 1.1, center: 93.173764, sigma: 0.12, tau: 0.6, knownLine: true, label: "N2H+", transition: "J=1-0" },
-      { amplitude: 0.35, center: 96.412950, sigma: 0.1, tau: 0.3, knownLine: true, label: "C34S", transition: "J=2-1" },
-      { amplitude: 0.3, center: 96.741375, sigma: 0.11, tau: 0.2, knownLine: true, label: "CH3OH", transition: "2(0)-1(0) A+" },
-      { amplitude: 1.5, center: 97.980953, sigma: 0.12, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
-      { amplitude: 0.65, center: 99.299870, sigma: 0.11, tau: 0.4, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
-      { amplitude: 0.22, center: 100.076392, sigma: 0.1, tau: 0.2, knownLine: true, label: "HC3N", transition: "J=11-10" },
-      { amplitude: 0.8, center: 109.782173, sigma: 0.1, tau: 0.4, knownLine: true, label: "C18O", transition: "J=1-0" },
-      { amplitude: 2.0, center: 110.201354, sigma: 0.11, tau: 1.2, knownLine: true, label: "13CO", transition: "J=1-0" },
-      { amplitude: 0.7, center: 113.490982, sigma: 0.13, tau: 0.5, knownLine: false },
-      { amplitude: 4.0, center: 115.271202, sigma: 0.13, tau: 5.0, knownLine: true, label: "CO", transition: "J=1-0" },
-    ],
-  },
-  {
-    id: 8,
-    name: "Level 8 – HEXOS Band 1a",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "ratio",
-    blurb:
-      "A small cut of Herschel/HIFI Band 1a toward Orion KL — the HEXOS survey. Real spectra here have thousands of lines; this vignette keeps seven strong ones, and every line on the plot counts toward your score. Use the log button to stretch the weaker features.",
-    xMin: 480,
-    xMax: 560,
-    noiseLevel: 0.05,
-    baseline: 0.45,
-    errorThresholdPercent: 0.25,
-    allowLogY: true,
-    trueLines: [
-      { amplitude: 1.8, center: 492.160651, sigma: 0.55, tau: 1.2, knownLine: true, label: "CI", transition: "3P1-3P0" },
-      { amplitude: 1.1, center: 531.716350, sigma: 0.45, tau: 0.8, knownLine: true, label: "HCN", transition: "J=6-5" },
-      { amplitude: 1.3, center: 535.061600, sigma: 0.42, tau: 1.0, knownLine: true, label: "HCO+", transition: "J=6-5" },
-      { amplitude: 0.7, center: 538.688830, sigma: 0.4, tau: 0.5, knownLine: true, label: "CS", transition: "J=11-10" },
-      { amplitude: 1.0, center: 548.831005, sigma: 0.38, tau: 0.6, knownLine: true, label: "C18O", transition: "J=5-4" },
-      { amplitude: 2.2, center: 550.926300, sigma: 0.4, tau: 1.5, knownLine: true, label: "13CO", transition: "J=5-4" },
-      { amplitude: 3.2, center: 556.936002, sigma: 0.55, tau: 2.5, knownLine: true, label: "H2O", transition: "1(1,0)-1(0,1)" },
-    ],
-  },
-  {
-    id: 9,
-    name: "Level 9 – Radio absorption",
-    track: "radio",
-    mode: "absorption",
-    axis: "GHz",
-    sonify: "stretch",
-    blurb:
-      "Same 86–95 GHz window as Level 1, but in absorption against a bright continuum. HCN and HCO+ return, now joined by C2H, HNC and a saturated N2H+ core, plus faint SiO and H13CO+ on the side.",
-    xMin: 86,
-    xMax: 95,
-    noiseLevel: 0.05,
-    baseline: 3.2,
-    errorThresholdPercent: 0.3,
-    trueLines: [
-      { amplitude: 0.19, center: 86.243442, sigma: 0.2, tau: 0.4, knownLine: true, label: "SiO", transition: "J=2-1 v=0" },
-      { amplitude: 0.13, center: 86.754294, sigma: 0.18, tau: 0.3, knownLine: true, label: "H13CO+", transition: "J=1-0" },
-      { amplitude: 0.31, center: 87.316898, sigma: 0.2, tau: 0.6, knownLine: true, label: "C2H", transition: "N=1-0" },
-      { amplitude: 0.63, center: 88.631847, sigma: 0.15, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 0.56, center: 89.188523, sigma: 0.14, tau: 1.5, knownLine: true, label: "HCO+", transition: "J=1-0" },
-      { amplitude: 0.38, center: 90.663568, sigma: 0.18, tau: 1.0, knownLine: true, label: "HNC", transition: "J=1-0" },
-      { amplitude: 0.91, center: 93.173764, sigma: 0.3, tau: 8.0, knownLine: true, label: "N2H+", transition: "J=1-0" },
-    ],
-  },
-  {
-    id: 10,
-    name: "Level 10 – Solar spectrum",
     track: "solar",
-    mode: "absorption",
-    axis: "nm",
-    sonify: "ratio",
-    blurb:
-      "Fraunhofer's own spectrum, normalised at the middle of the band. The continuum is not a free shape: its curvature is the Sun's surface temperature, and its slope is the amount of air the light crossed, which reddens the blue end. Set both, fit the amber atmospheric O₂ lines (telluric — made by Earth's air, not the Sun), then fit the solar lines.",
-    xMin: 380,
-    xMax: 700,
-    noiseLevel: 0.012,
-    baseline: 1.0,
-    continuum: { type: "solar", temperatureK: SUN_TEFF_K, airmass: 1.15 },
-    continuumLockPercent: 9,
-    errorThresholdPercent: 0.25,
-    showSpectrumColors: true,
+    name: { en: "Violet Sun", de: "Violette Sonne" },
+    blurb: {
+      en: "The violet end of sunlight. Calcium makes two big dark dips, and hydrogen makes a third!",
+      de: "Das violette Ende des Sonnenlichts. Kalzium macht zwei große dunkle Täler, und Wasserstoff ein drittes!",
+    },
+    xMin: 385,
+    xMax: 415,
     trueLines: [
       { amplitude: 0.8, center: 393.366, sigma: 0.65, tau: 8, knownLine: true, label: "Ca II", transition: "K" },
       { amplitude: 0.75, center: 396.847, sigma: 0.62, tau: 7, knownLine: true, label: "Ca II", transition: "H" },
-      { amplitude: 0.45, center: 410.175, sigma: 0.7, tau: 2.5, knownLine: true, label: "H I", transition: "h (H-delta)" },
-      { amplitude: 0.35, center: 430.78, sigma: 0.8, tau: 2, knownLine: true, label: "Fe I", transition: "G band (with Ca I)" },
-      { amplitude: 0.48, center: 434.047, sigma: 0.75, tau: 2.5, knownLine: true, label: "H I", transition: "G' (H-gamma)" },
+      { amplitude: 0.45, center: 410.175, sigma: 0.7, tau: 2.5, knownLine: true, label: "H I", transition: "H-δ" },
+    ],
+  }),
+  kidsLevel({
+    id: 2,
+    track: "solar",
+    name: { en: "Blue Sun", de: "Blaue Sonne" },
+    blurb: {
+      en: "Iron, hydrogen and more iron each leave a dark mark in the blue light.",
+      de: "Eisen, Wasserstoff und nochmal Eisen hinterlassen je eine dunkle Spur im blauen Licht.",
+    },
+    xMin: 425,
+    xMax: 445,
+    trueLines: [
+      { amplitude: 0.35, center: 430.78, sigma: 0.8, tau: 2, knownLine: true, label: "Fe I", transition: "G" },
+      { amplitude: 0.48, center: 434.047, sigma: 0.75, tau: 2.5, knownLine: true, label: "H I", transition: "H-γ" },
       { amplitude: 0.22, center: 438.355, sigma: 0.6, tau: 1, knownLine: true, label: "Fe I", transition: "e" },
-      { amplitude: 0.52, center: 486.134, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "F (H-beta)" },
+    ],
+  }),
+  kidsLevel({
+    id: 3,
+    track: "solar",
+    name: { en: "Turquoise Sun", de: "Türkise Sonne" },
+    blurb: {
+      en: "Hydrogen and iron hide in the blue-green part of the rainbow.",
+      de: "Wasserstoff und Eisen verstecken sich im blaugrünen Teil des Regenbogens.",
+    },
+    xMin: 478,
+    xMax: 505,
+    trueLines: [
+      { amplitude: 0.52, center: 486.134, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "H-β" },
       { amplitude: 0.2, center: 495.761, sigma: 0.6, tau: 1, knownLine: true, label: "Fe I", transition: "c" },
-      { amplitude: 0.55, center: 517.3, sigma: 1.1, tau: 4, knownLine: true, label: "Mg I", transition: "b triplet (blend)" },
+    ],
+  }),
+  kidsLevel({
+    id: 4,
+    track: "solar",
+    name: { en: "Green Sun", de: "Grüne Sonne" },
+    blurb: {
+      en: "Magnesium and iron in the green, where the Sun shines brightest.",
+      de: "Magnesium und Eisen im Grünen, wo die Sonne am hellsten strahlt.",
+    },
+    xMin: 510,
+    xMax: 535,
+    trueLines: [
+      { amplitude: 0.55, center: 517.3, sigma: 1.1, tau: 4, knownLine: true, label: "Mg I", transition: "b" },
       { amplitude: 0.26, center: 527.039, sigma: 0.7, tau: 1.2, knownLine: true, label: "Fe I", transition: "E2" },
-      // Too faint beside Na D at this zoom — scored in the sodium close-up instead.
-      { amplitude: 0.05, center: 587.562, sigma: 0.45, tau: 0.4, knownLine: true, label: "He I", transition: "D3", graded: false },
-      { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D doublet (blend)" },
-      { amplitude: 0.16, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, role: "telluric", label: "O2", transition: "a (telluric)" },
-      { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "C (H-alpha)" },
-      { amplitude: 0.28, center: 686.719, sigma: 0.7, tau: 1.5, knownLine: true, role: "telluric", label: "O2", transition: "B (telluric)" },
     ],
-  },
-  {
-    id: 11,
-    name: "Level 11 – Magnesium close-up",
+  }),
+  kidsLevel({
+    id: 5,
     track: "solar",
-    mode: "absorption",
-    axis: "nm",
-    sonify: "ratio",
-    blurb:
-      "Four nanometres of the green, where the single dark 'Mg b' feature of Level 10 turns out to be three magnesium lines with an iron line wedged against the first one.",
-    xMin: 515.5,
-    xMax: 519.5,
-    noiseLevel: 0.008,
-    baseline: 1.0,
-    errorThresholdPercent: 0.015,
-    showSpectrumColors: true,
+    name: { en: "Yellow & Orange Sun", de: "Gelbe & orange Sonne" },
+    blurb: {
+      en: "Sodium — the stuff in table salt and street lamps — plus a dip made by the oxygen in our own air!",
+      de: "Natrium – das steckt in Kochsalz und Straßenlaternen – und dazu ein Tal vom Sauerstoff in unserer eigenen Luft!",
+    },
+    xMin: 575,
+    xMax: 640,
     trueLines: [
-      { amplitude: 0.6, center: 516.733, sigma: 0.042, tau: 3, knownLine: true, label: "Mg I", transition: "b4" },
-      { amplitude: 0.24, center: 516.891, sigma: 0.038, tau: 1.5, knownLine: true, label: "Fe I", transition: "b3" },
-      { amplitude: 0.55, center: 517.27, sigma: 0.045, tau: 2.5, knownLine: true, label: "Mg I", transition: "b2" },
-      { amplitude: 0.62, center: 518.362, sigma: 0.048, tau: 3, knownLine: true, label: "Mg I", transition: "b1" },
+      { amplitude: 0.7, center: 589.29, sigma: 0.8, tau: 6, knownLine: true, label: "Na I", transition: "D" },
+      { amplitude: 0.2, center: 627.661, sigma: 0.6, tau: 0.8, knownLine: true, role: "telluric", label: "O2", transition: "a" },
     ],
-  },
-  {
-    id: 12,
-    name: "Level 12 – Sodium close-up",
+  }),
+  kidsLevel({
+    id: 6,
     track: "solar",
-    mode: "absorption",
-    axis: "nm",
-    sonify: "ratio",
-    blurb:
-      "Five nanometres of the yellow: the famous sodium D line is a doublet, and both cores are so opaque that their bottoms are flat. The faint neighbour is helium, the element found in the Sun before it was found on Earth.",
-    xMin: 586.5,
-    xMax: 591.5,
-    noiseLevel: 0.008,
-    baseline: 1.0,
-    errorThresholdPercent: 0.02,
-    showSpectrumColors: true,
+    name: { en: "Red Sun", de: "Rote Sonne" },
+    blurb: {
+      en: "Hydrogen in the red — and Earth's air takes two big bites out of the sunlight.",
+      de: "Wasserstoff im Roten – und die Luft der Erde beißt zwei große Stücke aus dem Sonnenlicht.",
+    },
+    xMin: 640,
+    xMax: 770,
     trueLines: [
-      { amplitude: 0.09, center: 587.562, sigma: 0.05, tau: 0.5, knownLine: true, label: "He I", transition: "D3" },
-      { amplitude: 0.78, center: 588.995, sigma: 0.07, tau: 6, knownLine: true, label: "Na I", transition: "D2" },
-      { amplitude: 0.7, center: 589.592, sigma: 0.065, tau: 5, knownLine: true, label: "Na I", transition: "D1" },
+      { amplitude: 0.55, center: 656.281, sigma: 0.8, tau: 3, knownLine: true, label: "H I", transition: "H-α" },
+      { amplitude: 0.28, center: 686.719, sigma: 0.7, tau: 1.5, knownLine: true, role: "telluric", label: "O2", transition: "B" },
+      { amplitude: 0.5, center: 759.37, sigma: 0.8, tau: 2, knownLine: true, role: "telluric", label: "O2", transition: "A" },
     ],
-  },
-  {
-    id: 13,
-    name: "Level 13 – Continuum first",
-    track: "radio",
-    mode: "emission",
-    axis: "GHz",
-    sonify: "ratio",
-    blurb:
-      "A rising dust continuum under a handful of 3 mm lines — like a cut of a HEXOS-style scan. The continuum is pinned to 0.85 K at the middle of the band, so all you fit is its spectral index α: dust emission goes as ν^α, with α = 2 + β for emissivity index β. Lock it first (Phase 1), then fit the molecular lines on what remains.",
-    xMin: 88,
-    xMax: 116,
-    noiseLevel: 0.05,
-    baseline: 0.6,
-    continuum: { type: "powerLaw", refBrightnessK: 0.85, index: 4.0 },
-    continuumLockPercent: 9,
-    errorThresholdPercent: 0.25,
-    allowLogY: true,
+  }),
+  kidsLevel({
+    id: 7,
+    track: "dust",
+    name: { en: "Cold Cloud", de: "Kalte Wolke" },
+    blurb: {
+      en: "Radio light from a dark, cold cloud where new stars are born. Three molecules shine here.",
+      de: "Radiolicht aus einer dunklen, kalten Wolke, in der neue Sterne entstehen. Drei Moleküle leuchten hier.",
+    },
+    xMin: 87.5,
+    xMax: 94.5,
     trueLines: [
-      { amplitude: 2.4, center: 88.631847, sigma: 0.14, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
-      { amplitude: 2.0, center: 89.188523, sigma: 0.13, tau: 1.4, knownLine: true, label: "HCO+", transition: "J=1-0" },
-      { amplitude: 1.1, center: 93.173764, sigma: 0.14, tau: 0.7, knownLine: true, label: "N2H+", transition: "J=1-0" },
-      { amplitude: 1.4, center: 97.980953, sigma: 0.14, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
-      { amplitude: 0.9, center: 109.782173, sigma: 0.12, tau: 0.5, knownLine: true, label: "C18O", transition: "J=1-0" },
-      { amplitude: 2.2, center: 110.201354, sigma: 0.13, tau: 1.3, knownLine: true, label: "13CO", transition: "J=1-0" },
-      { amplitude: 3.6, center: 115.271202, sigma: 0.16, tau: 4.0, knownLine: true, label: "CO", transition: "J=1-0" },
+      { amplitude: 2.4, center: 88.631847, sigma: 0.2, tau: 1.8, knownLine: true, label: "HCN", transition: "J=1-0" },
+      { amplitude: 2.0, center: 89.188523, sigma: 0.2, tau: 1.4, knownLine: true, label: "HCO+", transition: "J=1-0" },
+      { amplitude: 1.1, center: 93.173764, sigma: 0.2, tau: 0.7, knownLine: true, label: "N2H+", transition: "J=1-0" },
     ],
-  },
+  }),
+  kidsLevel({
+    id: 8,
+    track: "dust",
+    name: { en: "Sulfur Cloud", de: "Schwefelwolke" },
+    blurb: {
+      en: "Three molecules with sulfur in them — the stuff that makes rotten eggs smell!",
+      de: "Drei Moleküle mit Schwefel – dem Stoff, der faule Eier stinken lässt!",
+    },
+    xMin: 95,
+    xMax: 101,
+    trueLines: [
+      { amplitude: 0.9, center: 96.41295, sigma: 0.2, tau: 0.5, knownLine: true, label: "C34S", transition: "J=2-1" },
+      { amplitude: 1.4, center: 97.980953, sigma: 0.2, tau: 1.0, knownLine: true, label: "CS", transition: "J=2-1" },
+      { amplitude: 1.0, center: 99.29987, sigma: 0.2, tau: 0.8, knownLine: true, label: "SO", transition: "3(2)-2(1)" },
+    ],
+  }),
+  kidsLevel({
+    id: 9,
+    track: "dust",
+    name: { en: "Carbon Monoxide Twins", de: "Kohlenmonoxid-Zwillinge" },
+    blurb: {
+      en: "Two kinds of the same molecule, standing close together. Can you tell them apart?",
+      de: "Zwei Sorten desselben Moleküls, ganz dicht beieinander. Kannst du sie auseinanderhalten?",
+    },
+    xMin: 108.5,
+    xMax: 112,
+    trueLines: [
+      { amplitude: 0.9, center: 109.782173, sigma: 0.15, tau: 0.5, knownLine: true, label: "C18O", transition: "J=1-0" },
+      { amplitude: 2.2, center: 110.201354, sigma: 0.15, tau: 1.3, knownLine: true, label: "13CO", transition: "J=1-0" },
+    ],
+  }),
+  kidsLevel({
+    id: 10,
+    track: "dust",
+    name: { en: "The Brightest Line", de: "Die hellste Linie" },
+    blurb: {
+      en: "Carbon monoxide, the brightest radio line in the sky, and its small neighbour CN.",
+      de: "Kohlenmonoxid, die hellste Radiolinie am Himmel, und sein kleiner Nachbar CN.",
+    },
+    xMin: 112.5,
+    xMax: 118,
+    trueLines: [
+      { amplitude: 1.0, center: 113.490982, sigma: 0.2, tau: 0.6, knownLine: true, label: "CN", transition: "N=1-0" },
+      { amplitude: 3.6, center: 115.271202, sigma: 0.22, tau: 4.0, knownLine: true, label: "CO", transition: "J=1-0" },
+    ],
+  }),
 ];
 
 function levelById(id) {
   return LEVELS.find((lvl) => lvl.id === id) || null;
 }
 
-/**
- * Every science line that is drawn can be fitted, plus two spare components.
- * Tellurics are handled in the baseline phase and do not consume this budget.
- */
-function maxComponentsForLevel(level) {
-  if (level && Number.isFinite(level.maxGaussians)) return level.maxGaussians;
-  const lines = scienceLinesOf(level && level.trueLines).length || 1;
-  return lines + 2;
+function levelTitle(level) {
+  return t("level", { n: level.id }) + " · " + tx(level.name);
 }
 
-/**
- * Slider ranges follow the level, so a Fraunhofer line 10 % deep and a 4 K CO peak both work.
- * In absorption the depth is a fraction of the continuum, so its range is simply 0–100 %.
- * The narrowest allowed width is the spectrograph's own resolution: no instrument can show a
- * line sharper than that, so the slider does not pretend otherwise.
- */
+function levelBandLabel(level) {
+  return level.xMin + "–" + level.xMax + " " + axisOf(level).unit;
+}
+
+/** Every science line can be fitted, plus two spare lines. */
+function maxComponentsForLevel(level) {
+  return scienceLinesOf(level.trueLines).length + 2;
+}
+
+/** Slider ranges follow the level; the width can't go below the spectrograph's resolution. */
 function sliderRanges(level) {
   const lines = scienceLinesOf(level.trueLines);
-  const amplitudes = (lines.length ? lines : level.trueLines).map((l) => l.amplitude);
-  const sigmas = (lines.length ? lines : level.trueLines).map((l) => l.sigma);
+  const sigmas = lines.map((l) => l.sigma);
   const range = level.xMax - level.xMin;
   const absorb = isAbsorption(level.mode);
-  const amplitudeMax = absorb ? 1 : Math.max.apply(null, amplitudes) * 1.3;
+  const amplitudeMax = absorb ? 1 : Math.max.apply(null, lines.map((l) => l.amplitude)) * 1.3;
   const resolution = levelResolution(level);
-  const sigmaMin = Math.max(
-    1e-4,
-    Math.min(
-      resolution ? resolution.sigma * 0.8 : Infinity,
-      Math.min.apply(null, sigmas) * 0.9
-    )
-  );
+  const sigmaMin = Math.max(1e-4, Math.min(resolution.sigma * 0.8, Math.min.apply(null, sigmas) * 0.9));
   const sigmaMax = Math.max.apply(null, sigmas) * 3;
   return {
-    amplitudeMin: absorb ? 0.005 : Math.max(0.01, amplitudeMax / 200),
+    amplitudeMin: absorb ? 0.01 : amplitudeMax / 100,
     amplitudeMax,
-    amplitudeStep: amplitudeMax / 500,
-    amplitudeFineStep: amplitudeMax / 2500,
+    amplitudeStep: amplitudeMax / 200,
+    amplitudeFineStep: amplitudeMax / 100,
     sigmaMin,
     sigmaMax,
-    sigmaStep: (sigmaMax - sigmaMin) / 500,
-    sigmaFineStep: (sigmaMax - sigmaMin) / 2500,
-    centerStep: range / 1500,
-    centerFineStep: range / 150000,
+    sigmaStep: (sigmaMax - sigmaMin) / 200,
+    sigmaFineStep: (sigmaMax - sigmaMin) / 100,
+    centerStep: range / 1000,
+    centerFineStep: range / 500,
   };
 }
 
-/** Neutral starting values for a new component: never the answer, just a sensible guess. */
+/** Starting values for a new line: a sensible guess, never the answer. */
 function componentDefaults(level) {
   const lines = scienceLinesOf(level.trueLines);
   const amplitudes = lines.map((l) => l.amplitude).sort((a, b) => a - b);
   const sigmas = lines.map((l) => l.sigma).sort((a, b) => a - b);
   const mid = (arr) => arr[Math.floor(arr.length / 2)];
-  return {
-    amplitude: mid(amplitudes) || 1,
-    sigma: mid(sigmas) || 0.3,
-    tau: 0.5,
-  };
+  return { amplitude: mid(amplitudes) || 1, sigma: mid(sigmas) || 0.3, tau: 1 };
 }
 
-/** What the strength parameter of a line physically is on this level, and how to print it. */
-function amplitudeMeta(level) {
-  if (isAbsorption(level.mode)) {
-    return {
-      label: "Line depth",
-      hint: "fraction of the continuum swallowed at line centre",
-      format: (v) => (v * 100).toFixed(1) + " % of continuum",
-    };
-  }
-  return {
-    label: "Peak brightness T_B",
-    hint: "brightness temperature above the continuum",
-    format: (v) => v.toFixed(2) + " K",
-  };
+function newComponent(level, id, center) {
+  const defs = componentDefaults(level);
+  return { id, amplitude: defs.amplitude, center, sigma: defs.sigma, tau: defs.tau, role: "science" };
 }
 
-/** Width readout: what an observer would quote (FWHM) plus its Doppler equivalent. */
-function describeWidth(sigma, center, axisKey) {
-  const fwhm = sigma * FWHM_PER_SIGMA;
-  const unit = axisByKey(axisKey).unit;
-  const v = velocityWidthKms(fwhm, center);
-  return (
-    "FWHM " +
-    fwhm.toFixed(3) +
-    " " +
-    unit +
-    (Number.isFinite(v) ? " · " + v.toFixed(v < 10 ? 1 : 0) + " km/s" : "")
-  );
-}
-
-/** One-line description of the spectrograph a level stands for. */
-function describeResolution(level) {
-  const res = levelResolution(level);
-  if (!res) return "";
-  const unit = axisOf(level).unit;
-  return (
-    "Resolution: FWHM ≈ " +
-    res.fwhm.toFixed(3) +
-    " " +
-    unit +
-    (Number.isFinite(res.resolvingPower)
-      ? " (R ≈ " + Math.round(res.resolvingPower) + ")"
-      : "")
-  );
-}
-
-function describeTau(tau) {
-  if (!(tau > TAU_THIN)) return "thin (Gaussian)";
-  if (tau < 0.3) return "optically thin";
-  if (tau < 1.5) return "moderate";
-  if (tau < 6) return "optically thick";
-  return "saturated";
-}
-
+/** The τ slider is logarithmic, so thin and saturated lines each get half of its travel. */
 function tauToSlider(tau) {
   const clamped = Math.min(TAU_MAX, Math.max(TAU_MIN, tau || TAU_MIN));
   return (1000 * Math.log(clamped / TAU_MIN)) / Math.log(TAU_MAX / TAU_MIN);
@@ -1447,6 +1798,18 @@ function tauToSlider(tau) {
 
 function sliderToTau(sliderValue) {
   return TAU_MIN * Math.pow(TAU_MAX / TAU_MIN, sliderValue / 1000);
+}
+
+/** Kid words for how saturated a line is: thin lines are Gaussian, thick ones flatten out. */
+function describeTau(tau, absorb) {
+  if (tau < 0.3) return t("tauThin");
+  if (tau < 1.5) return t("tauMid");
+  if (tau < 6) return t("tauThick");
+  return t("tauFull", { edge: t(absorb ? "edgeBottom" : "edgeTop") });
+}
+
+function formatAmplitude(level, v) {
+  return isAbsorption(level.mode) ? Math.round(v * 100) + " %" : v.toFixed(1) + " K";
 }
 
 /** Rough visible-light colour for a wavelength in nm, used for the solar plot backdrop. */
@@ -1482,388 +1845,429 @@ function wavelengthToRgb(nm) {
   return [to255(r), to255(g), to255(b)];
 }
 
+/** Smoothstep animation over `ms`; returns a cancel function. */
+function animate(ms, onFrame, onDone) {
+  const t0 = performance.now();
+  let raf = 0;
+  const step = (now) => {
+    const f = Math.min(1, (now - t0) / ms);
+    onFrame(f * f * (3 - 2 * f));
+    if (f < 1) raf = requestAnimationFrame(step);
+    else if (onDone) onDone();
+  };
+  raf = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(raf);
+}
+
 // ——— Shared UI bits ———
 
-/**
- * One parameter: its name, its value with a unit, a coarse slider, and a nudge button on each
- * side for fine tuning. Every slider in the game uses this, so no parameter needs a number box
- * of its own and all of them can be tuned to the last digit.
- */
+const h = (...args) => React.createElement(...args);
+
+/** One parameter: name, value, a slider, and big (−)/(+) buttons for small steps. */
 function ParamSlider(props) {
-  const {
-    label,
-    display,
-    note,
-    min,
-    max,
-    step,
-    fineStep,
-    value,
-    sliderValue,
-    disabled,
-    onChange,
-    onSliderChange,
-    onNudge,
-  } = props;
-  const nudge = (delta) => {
-    if (disabled) return;
-    if (onNudge) onNudge(delta);
-    else onChange(Math.min(max, Math.max(min, value + delta)));
-  };
-  return React.createElement(
+  const { label, display, min, max, step, fineStep, value, onChange } = props;
+  const nudge = (delta) => onChange(Math.min(max, Math.max(min, value + delta)));
+  return h(
     "div",
     { className: "slider-group" },
-    React.createElement(
-      "div",
-      { className: "slider-label" },
-      React.createElement("span", null, label),
-      React.createElement("span", { className: "value" }, display)
-    ),
-    React.createElement(
+    h("div", { className: "slider-label" }, h("span", null, label), h("span", { className: "value" }, display)),
+    h(
       "div",
       { className: "slider-row" },
-      React.createElement(
+      h(
         "button",
-        {
-          type: "button",
-          className: "nudge-button",
-          disabled: !!disabled,
-          onClick: () => nudge(-fineStep),
-          "aria-label": "Decrease " + label + " by one fine step",
-          title: "Fine step down",
-        },
+        { type: "button", className: "nudge-button", onClick: () => nudge(-fineStep), "aria-label": label + " – " + t("nudgeDown") },
         "−"
       ),
-      React.createElement("input", {
+      h("input", {
         type: "range",
         className: "slider-input",
         min,
         max,
         step,
-        value: sliderValue != null ? sliderValue : value,
-        disabled: !!disabled,
+        value,
+        "aria-label": label,
         onChange: (e) => {
           const v = parseFloat(e.target.value);
-          if (!isFinite(v)) return;
-          if (onSliderChange) onSliderChange(v);
-          else onChange(v);
+          if (isFinite(v)) onChange(v);
         },
       }),
-      React.createElement(
+      h(
         "button",
-        {
-          type: "button",
-          className: "nudge-button",
-          disabled: !!disabled,
-          onClick: () => nudge(fineStep),
-          "aria-label": "Increase " + label + " by one fine step",
-          title: "Fine step up",
-        },
+        { type: "button", className: "nudge-button", onClick: () => nudge(fineStep), "aria-label": label + " – " + t("nudgeUp") },
         "+"
       )
-    ),
-    note ? React.createElement("div", { className: "param-note" }, note) : null
+    )
   );
 }
 
-function CdmsLearnMore(props) {
-  const solar = props && props.solar;
-  return React.createElement(
+function LangToggle(props) {
+  return h(
+    "div",
+    { className: "lang-toggle", role: "group", "aria-label": t("language") },
+    ["en", "de"].map((l) =>
+      h(
+        "button",
+        {
+          key: l,
+          type: "button",
+          className: "lang-button" + (props.lang === l ? " active" : ""),
+          "aria-pressed": props.lang === l,
+          onClick: () => props.onChange(l),
+        },
+        l.toUpperCase()
+      )
+    )
+  );
+}
+
+function LearnMore() {
+  return h(
     "div",
     { className: "cdms-block" },
-    React.createElement(
+    h(
       "div",
       { className: "cdms-text" },
-      React.createElement("div", { className: "panel-title" }, "Learn more"),
-      React.createElement(
-        "p",
-        { className: "cdms-copy" },
-        solar
-          ? "The solar wavelengths are the classic Fraunhofer lines from standard line tables; the radio levels use rest frequencies from the Cologne Database for Molecular Spectroscopy (CDMS)."
-          : "Line frequencies come from the Cologne Database for Molecular Spectroscopy (CDMS)."
-      ),
-      React.createElement(
-        "a",
-        { href: CDMS_URL, target: "_blank", rel: "noopener noreferrer", className: "cdms-link" },
-        CDMS_URL
-      )
+      h("div", { className: "panel-title" }, t("learnMore")),
+      h("p", { className: "cdms-copy" }, t("learnMoreText")),
+      h("a", { href: CDMS_URL, target: "_blank", rel: "noopener noreferrer", className: "cdms-link" }, CDMS_URL)
     ),
-    React.createElement("img", {
-      src: "./cdms-qr.png",
-      alt: "QR code linking to CDMS",
-      className: "cdms-qr",
-      width: 120,
-      height: 120,
-    })
+    h("img", { src: "./cdms-qr.png", alt: t("qrAlt"), className: "cdms-qr", width: 120, height: 120 })
   );
 }
 
 function StarsDisplay(props) {
   const n = props.stars || 0;
-  return React.createElement(
+  return h(
     "span",
-    { className: "stars", "aria-label": n + " of 5 stars" },
-    [1, 2, 3, 4, 5].map((i) =>
-      React.createElement("span", { key: i, className: i <= n ? "star on" : "star" }, "★")
-    )
+    { className: "stars", "aria-label": t("stars", { n }) },
+    [1, 2, 3, 4, 5].map((i) => h("span", { key: i, className: i <= n ? "star on" : "star" }, "★"))
   );
+}
+
+function ModePill(props) {
+  const absorb = isAbsorption(props.level.mode);
+  return h("span", { className: "mode-pill " + (absorb ? "absorption" : "emission") }, t(absorb ? "absorption" : "emission"));
 }
 
 function LeaderboardPanel(props) {
   const board = props.board || {};
-  const onReset = props.onReset;
-  return React.createElement(
+  return h(
     "div",
     { className: "panel leaderboard-panel" },
-    React.createElement(
+    h(
       "div",
       { className: "leaderboard-header" },
-      React.createElement("div", { className: "panel-title" }, "Leaderboard"),
-      onReset &&
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            className: "secondary-button tiny-button",
-            onClick: onReset,
-          },
-          "Reset leaderboard"
-        )
+      h("div", { className: "panel-title" }, "🏆 ", t("leaderboard")),
+      h("button", { type: "button", className: "secondary-button tiny-button", onClick: props.onReset }, t("resetLeaderboard"))
     ),
-    React.createElement(
-      "p",
-      { className: "leaderboard-intro" },
-      "Top ",
-      LEADERBOARD_TOP_N,
-      " scores per level on this device (lower mean error is better). Each level has its own",
-      " precision target, so wide scans are not compared against the warm-up."
-    ),
-    TRACKS.map((track) =>
-      React.createElement(
-        "div",
-        { key: track.key, className: "leaderboard-track" },
-        React.createElement(
+    h("p", { className: "leaderboard-intro" }, t("leaderboardIntro")),
+    h(
+      "div",
+      { className: "leaderboard-levels" },
+      LEVELS.map((lvl) => {
+        const list = Array.isArray(board[String(lvl.id)]) ? board[String(lvl.id)] : [];
+        return h(
           "div",
-          { className: "leaderboard-track-title" },
-          track.label,
-          track.key === "solar" ? " — Fraunhofer absorption lines" : " — CDMS emission and absorption"
-        ),
-        React.createElement(
+          { key: lvl.id, className: "leaderboard-level-block" },
+          h("div", { className: "leaderboard-level-title" }, levelTitle(lvl)),
+          list.length === 0
+            ? h("p", { className: "leaderboard-empty" }, t("noScores"))
+            : h(
+                "ol",
+                { className: "leaderboard-list" },
+                list.map((entry, i) =>
+                  h(
+                    "li",
+                    { key: entry.at + "-" + i },
+                    h("span", { className: "lb-rank" }, i + 1, "."),
+                    h("span", { className: "lb-name" }, entry.name),
+                    h(StarsDisplay, { stars: entry.stars })
+                  )
+                )
+              )
+        );
+      })
+    )
+  );
+}
+
+/** The attract-screen map: the Sun, then Earth's air, then space clouds. */
+const CHAPTERS = [
+  { key: "sun", emoji: "☀️", title: "chapterSun", desc: "chapterSunDesc", has: (l) => l.track === "solar" && !telluricLinesOf(l.trueLines).length },
+  { key: "air", emoji: "🌍", title: "chapterAir", desc: "chapterAirDesc", has: (l) => l.track === "solar" && telluricLinesOf(l.trueLines).length > 0 },
+  { key: "cloud", emoji: "☁️", title: "chapterCloud", desc: "chapterCloudDesc", has: (l) => l.track === "dust" },
+];
+
+/** Every level is playable from the start; the first unsolved one is marked as the next stop. */
+function LevelPicker(props) {
+  const board = props.board || {};
+  const bestOf = (lvl) => (board[String(lvl.id)] || [])[0];
+  const solved = (lvl) => bestOf(lvl) || (props.passedLevels && props.passedLevels.has(lvl.id));
+  const next = LEVELS.find((lvl) => !solved(lvl));
+  return h(
+    "div",
+    { className: "panel level-picker" },
+    h("div", { className: "panel-title" }, "🗺️ ", t("journey")),
+    h(
+      "div",
+      { className: "journey" },
+      CHAPTERS.map((chapter) =>
+        h(
           "div",
-          { className: "leaderboard-levels" },
-          LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
-            const list = Array.isArray(board[String(lvl.id)]) ? board[String(lvl.id)] : [];
-            const bands = starBandsForLevel(lvl);
-            return React.createElement(
-              "div",
-              { key: lvl.id, className: "leaderboard-level-block" },
-              React.createElement(
-                "div",
-                { className: "leaderboard-level-title" },
-                "L",
-                lvl.id,
-                " — ",
-                lvl.name.replace(/^Level \d+ – /, "")
-              ),
-              list.length === 0
-                ? React.createElement(
-                    "p",
-                    { className: "leaderboard-empty" },
-                    "No scores yet — be the first!"
-                  )
-                : React.createElement(
-                    "ol",
-                    { className: "leaderboard-list" },
-                    list.map((entry, i) =>
-                      React.createElement(
-                        "li",
-                        { key: entry.at + "-" + entry.name + "-" + i },
-                        React.createElement("span", { className: "lb-rank" }, i + 1, "."),
-                        React.createElement("span", { className: "lb-name" }, entry.name),
-                        React.createElement(StarsDisplay, {
-                          stars:
-                            entry.stars != null
-                              ? entry.stars
-                              : starsFromMeanError(entry.meanErr, bands),
-                        }),
-                        React.createElement(
-                          "span",
-                          { className: "lb-stats" },
-                          isFinite(entry.meanErr) ? entry.meanErr.toFixed(3) : "—",
-                          "% mean err",
-                          React.createElement(
-                            "span",
-                            { className: "lb-mse" },
-                            " · MSE ",
-                            isFinite(entry.mse) ? entry.mse.toFixed(4) : "—"
-                          )
-                        )
-                      )
-                    )
-                  )
-            );
-          })
+          { key: chapter.key, className: "journey-chapter" },
+          h(
+            "div",
+            { className: "journey-chapter-title" },
+            h("span", { className: "journey-chapter-emoji", "aria-hidden": true }, chapter.emoji),
+            h("span", null, h("strong", null, t(chapter.title)), h("span", { className: "journey-chapter-desc" }, t(chapter.desc)))
+          ),
+          h(
+            "div",
+            { className: "journey-stops" },
+            LEVELS.filter(chapter.has).map((lvl) => {
+              const best = bestOf(lvl);
+              return h(
+                "button",
+                {
+                  key: lvl.id,
+                  type: "button",
+                  className: "map-stop" + (solved(lvl) ? " map-stop-played" : "") + (lvl === next ? " map-stop-next" : ""),
+                  onClick: () => props.onPlay(LEVELS.indexOf(lvl)),
+                },
+                h("span", { className: "map-stop-dot" }, lvl.id),
+                h("span", { className: "map-stop-name" }, tx(lvl.name)),
+                best
+                  ? h(StarsDisplay, { stars: best.stars })
+                  : solved(lvl)
+                  ? h("span", { className: "map-stop-label" }, "✓")
+                  : lvl === next
+                  ? h("span", { className: "map-stop-label" }, "📍 ", t("nextStop"))
+                  : h("span", { className: "map-stop-label" }, t("notPlayed"))
+              );
+            })
+          )
         )
       )
     )
   );
 }
 
-/** "Level 8 – HEXOS Band 1a" → "HEXOS Band 1a". */
-function levelShortName(level) {
-  const dash = level.name.indexOf("–");
-  return dash >= 0 ? level.name.slice(dash + 1).trim() : level.name;
-}
-
-function levelBandLabel(level) {
-  const axis = axisOf(level);
-  return level.xMin + "–" + level.xMax + " " + axis.unit;
-}
-
-/** Every level is playable from the start — visitors pick what they like the look of. */
-function LevelPicker(props) {
-  const board = props.board || {};
-  return React.createElement(
+/** Every species as a sticker: collected ones show their character and fact, the rest a "?". */
+function StickerBook(props) {
+  const have = props.stickers || [];
+  const labels = Object.keys(SPECIES);
+  return h(
     "div",
-    { className: "panel level-picker" },
-    React.createElement("div", { className: "panel-title" }, "Choose a level"),
-    React.createElement(
-      "p",
-      { className: "level-picker-intro" },
-      "Nothing is locked — start anywhere, in any order, and switch levels at any time from the buttons in the header."
+    { className: "panel sticker-book" },
+    h(
+      "div",
+      { className: "leaderboard-header" },
+      h("div", { className: "panel-title" }, "📒 ", t("stickerBook")),
+      h("span", { className: "sticker-count" }, t("stickerCount", { n: have.length, total: labels.length }))
     ),
-    TRACKS.map((track) =>
-      React.createElement(
+    h("p", { className: "leaderboard-intro" }, t("stickerIntro")),
+    h(
+      "div",
+      { className: "sticker-grid" },
+      labels.map((label) => {
+        const sp = SPECIES[label];
+        const got = have.includes(label);
+        return h(
+          "div",
+          { key: label, className: "sticker" + (got ? " sticker-got" : "") },
+          h("span", { className: "sticker-emoji", "aria-hidden": true }, got ? sp.emoji : "❔"),
+          h("strong", null, got ? tx(sp.nick) : "???"),
+          got && h("span", { className: "sticker-name" }, tx(sp.name)),
+          got && h("p", { className: "sticker-fact" }, tx(sp.fact))
+        );
+      })
+    )
+  );
+}
+
+/** Specky the detective: a face and a speech bubble. Re-keying replays the little bounce. */
+function Mascot(props) {
+  return h(
+    "div",
+    { className: "mascot" },
+    h("span", { key: props.face + props.text, className: "mascot-face", "aria-hidden": true }, props.face),
+    h("p", { className: "mascot-bubble", role: "status" }, h("strong", null, t("mascotName"), ": "), props.text)
+  );
+}
+
+/** Warmer / colder: "hot" exactly when the line would pass, then by distance as a share of the window. */
+function heatOf(level, center) {
+  const lines = scienceLinesOf(level.trueLines);
+  if (lines.some((l) => (Math.abs(l.center - center) / l.center) * 100 <= level.errorThresholdPercent)) return "hot";
+  const d = Math.min.apply(null, lines.map((l) => Math.abs(l.center - center))) / (level.xMax - level.xMin);
+  return d <= 0.08 ? "warm" : d <= 0.2 ? "cool" : "cold";
+}
+
+function newQuizRound() {
+  const level = LEVELS[Math.floor(Math.random() * LEVELS.length)];
+  const lines = level.trueLines;
+  // Only a line whose species appears once can be the answer, or two markers would both be right.
+  const unique = lines.map((l, i) => i).filter((i) => lines.filter((o) => o.label === lines[i].label).length === 1);
+  return { levelId: level.id, target: unique[Math.floor(Math.random() * unique.length)], tried: [], solved: false };
+}
+
+/** Mini-game: hear one line's note (same two-octave mapping as the level) and tap which line sang it. */
+function QuizScreen(props) {
+  const [round, setRound] = React.useState(newQuizRound);
+  const [score, setScore] = React.useState({ right: 0, total: 0 });
+  const [msg, setMsg] = React.useState("");
+  const level = levelById(round.levelId);
+  const markers = level.trueLines;
+  const notes = React.useMemo(() => sonifyAxisValues(markers.map((l) => l.center), level).audibleHz, [level]);
+  const solar = level.track === "solar";
+  const axis = axisOf(level);
+  // Five ticks across the window, each labelled with the light (nm / GHz) and the note it becomes (Hz).
+  const ticks = React.useMemo(() => {
+    const fs = [0, 0.25, 0.5, 0.75, 1];
+    const values = fs.map((f) => level.xMin + f * (level.xMax - level.xMin));
+    const hz = sonifyAxisValues(values, level).audibleHz;
+    return fs.map((f, i) => ({ f, light: values[i], hz: hz[i] }));
+  }, [level]);
+
+  React.useEffect(() => () => stopAllAudio(), []);
+
+  function playNote(i) {
+    stopAllAudio();
+    playTone(notes[i], 1.2, props.muted);
+  }
+
+  function guess(i) {
+    if (round.solved || i === round.target) {
+      if (!round.solved) {
+        setScore((sc) => ({ right: sc.right + (round.tried.length ? 0 : 1), total: sc.total + 1 }));
+        setRound({ ...round, solved: true });
+        setMsg(t("quizRight", { name: tx(SPECIES[markers[i].label].nick) }));
+        playSfx("win");
+      } else playNote(i);
+      return;
+    }
+    setRound({ ...round, tried: round.tried.concat(i) });
+    setMsg(t("quizWrong"));
+    playNote(i);
+  }
+
+  const stripStyle = solar
+    ? {
+        background:
+          "linear-gradient(to right, " +
+          [0, 0.25, 0.5, 0.75, 1]
+            .map((f) => "rgba(" + wavelengthToRgb(level.xMin + f * (level.xMax - level.xMin)).join(",") + ",0.55)")
+            .join(", ") +
+          ")",
+      }
+    : null;
+
+  return h(
+    "main",
+    null,
+    h(
+      "div",
+      { className: "panel quiz-panel" },
+      h("div", { className: "panel-title modal-title" }, "🎵 ", t("quizTitle")),
+      h(Mascot, { face: round.solved ? "🤩" : "🕵️", text: msg || t("quizIntro") }),
+      h("p", { className: "step-text" }, levelTitle(level), " — ", t(solar ? "quizHintSolar" : "quizHintRadio")),
+      props.muted
+        ? h("p", { className: "phase-lock-hint" }, t("quizMuted"))
+        : h("button", { type: "button", className: "primary-button large-button", onClick: () => playNote(round.target) }, t("quizPlay")),
+      h(
         "div",
-        { key: track.key, className: "picker-track" },
-        React.createElement(
-          "div",
-          { className: "picker-track-title" },
-          track.label,
-          track.key === "radio"
-            ? " — molecular emission lines (CDMS)"
-            : " — solar Fraunhofer absorption lines"
-        ),
-        React.createElement(
-          "div",
-          { className: "picker-grid" },
-          LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
-            const idx = LEVELS.indexOf(lvl);
-            const best = (board[String(lvl.id)] || [])[0];
-            const scored = lvl.trueLines.filter(isGradedLine).length;
-            return React.createElement(
-              "button",
-              {
-                key: lvl.id,
-                type: "button",
-                className: "level-card" + (best ? " level-card-played" : ""),
-                onClick: () => props.onPlay(idx),
-              },
-              React.createElement(
-                "span",
-                { className: "level-card-head" },
-                React.createElement("span", { className: "level-card-id" }, "L" + lvl.id),
-                React.createElement("span", { className: "level-card-name" }, levelShortName(lvl)),
-                React.createElement(
-                  "span",
-                  { className: "mode-pill " + (lvl.mode === "absorption" ? "absorption" : "emission") },
-                  lvl.mode === "absorption" ? "Absorption" : "Emission"
-                )
-              ),
-              React.createElement(
-                "span",
-                { className: "level-card-meta" },
-                levelBandLabel(lvl),
-                " · ",
-                scored,
-                scored === 1 ? " line to fit" : " lines to fit"
-              ),
-              best
-                ? React.createElement(
-                    "span",
-                    { className: "level-card-best" },
-                    React.createElement(StarsDisplay, {
-                      stars:
-                        best.stars != null
-                          ? best.stars
-                          : starsFromMeanError(best.meanErr, starBandsForLevel(lvl)),
-                    }),
-                    " best: ",
-                    best.name,
-                    isFinite(best.meanErr) ? " (" + best.meanErr.toFixed(3) + "%)" : ""
-                  )
-                : React.createElement(
-                    "span",
-                    { className: "level-card-best level-card-unplayed" },
-                    "Not played yet"
-                  )
-            );
-          })
+        { className: "quiz-strip" + (solar ? "" : " quiz-strip-radio"), style: stripStyle },
+        markers.map((line, i) =>
+          h(
+            "button",
+            {
+              key: i,
+              type: "button",
+              className:
+                "quiz-marker" +
+                (i % 2 ? " quiz-marker-low" : "") +
+                (round.tried.includes(i) ? " quiz-marker-wrong" : "") +
+                (round.solved && i === round.target ? " quiz-marker-right" : ""),
+              style: { left: ((line.center - level.xMin) / (level.xMax - level.xMin)) * 100 + "%" },
+              disabled: props.muted,
+              onClick: () => guess(i),
+            },
+            h("span", { className: "quiz-marker-emoji", "aria-hidden": true }, SPECIES[line.label].emoji),
+            h("span", { className: "quiz-marker-name" }, tx(SPECIES[line.label].nick)),
+            round.solved && h("span", { className: "quiz-tick-sound" }, Math.round(notes[i]) + " Hz")
+          )
         )
-      )
+      ),
+      h(
+        "div",
+        { className: "quiz-axis", "aria-hidden": true },
+        ticks.map((tick) =>
+          h(
+            "span",
+            { key: tick.f, className: "quiz-tick", style: { left: tick.f * 100 + "%" } },
+            h("span", { className: "quiz-tick-light" }, tick.light.toFixed(axis.key === "nm" ? 1 : 2)),
+            h("span", { className: "quiz-tick-sound" }, Math.round(tick.hz))
+          )
+        )
+      ),
+      h(
+        "div",
+        { className: "quiz-axis-titles" },
+        h("span", { className: "quiz-tick-light" }, "▲ ", t(axis.key === "nm" ? "axisNm" : "axisGHz")),
+        h("span", { className: "quiz-tick-sound" }, "▼ ", t("quizAxisSound"))
+      ),
+      h("p", { className: "step-text" }, t("quizScore", { n: score.right, total: score.total })),
+      round.solved &&
+        h(
+          "button",
+          {
+            type: "button",
+            className: "primary-button large-button",
+            onClick: () => {
+              stopAllAudio();
+              setRound(newQuizRound());
+              setMsg("");
+            },
+          },
+          t("quizNext")
+        )
     )
   );
 }
 
 function AttractScreen(props) {
-  return React.createElement(
+  return h(
     "div",
     { className: "attract-screen" },
-    React.createElement(
+    h(
       "div",
       { className: "attract-hero panel" },
-      React.createElement("h1", { className: "attract-title" }, "Spectrum Fitter"),
-      React.createElement(
-        "p",
-        { className: "attract-tagline" },
-        "Fit the spectrum — hear the molecule"
-      ),
-      React.createElement(
-        "ul",
+      h("h1", { className: "attract-title" }, "🔭 ", t("appTitle")),
+      h("p", { className: "attract-tagline" }, t("tagline")),
+      h(
+        "ol",
         { className: "attract-howto" },
-        React.createElement("li", null, "Add one line for each spectral feature you can see."),
-        React.createElement(
-          "li",
-          null,
-          "On continuum levels: first fit and lock the baseline (solar temperature and airmass on the solar spectrum; dust spectral index on radio continuum), then fit the science lines."
-        ),
-        React.createElement(
-          "li",
-          null,
-          "Tune brightness or depth, position, width and optical depth until the green model matches the blue data. Use the (−)/(+) buttons for fine steps."
-        ),
-        React.createElement(
-          "li",
-          null,
-          "Radio levels show bright emission lines in kelvin; the solar levels show dark Fraunhofer absorption as a fraction of the continuum."
-        ),
-        React.createElement("li", null, "Submit your fit — pass when every line on the plot is close enough."),
-        React.createElement("li", null, "Then hear your fitted lines as audible tones.")
+        ["howto1", "howto2", "howto3", "howto4"].map((k) => h("li", { key: k }, t(k)))
       ),
-      React.createElement(
+      h(
         "div",
         { className: "attract-actions" },
-        React.createElement(
-          "button",
-          { type: "button", className: "primary-button large-button", onClick: props.onStart },
-          "Start with Level 1"
-        ),
-        React.createElement(
-          "span",
-          { className: "attract-actions-hint" },
-          "…or pick any level below."
-        )
+        h("button", { type: "button", className: "primary-button large-button", onClick: props.onStart }, t("start")),
+        h("button", { type: "button", className: "secondary-button large-button", onClick: props.onQuiz }, t("quizStart")),
+        h("span", { className: "attract-actions-hint" }, t("orPick"))
       )
     ),
-    React.createElement(LevelPicker, { board: props.board, onPlay: props.onPlayLevel }),
-    React.createElement(LeaderboardPanel, { board: props.board, onReset: props.onResetLeaderboard }),
-    React.createElement(CdmsLearnMore, { solar: true })
+    h(LevelPicker, { board: props.board, passedLevels: props.passedLevels, onPlay: props.onPlayLevel }),
+    h(StickerBook, { stickers: props.stickers }),
+    h(LeaderboardPanel, { board: props.board, onReset: props.onResetLeaderboard }),
+    h(LearnMore)
   );
 }
 
 // ——— Game view ———
 
-/** Faint rainbow behind the solar plots, so visitors see where in the spectrum a line sits. */
+/** Faint rainbow behind the solar plots, so kids see which colour of light a line sits in. */
 const spectrumBackdropPlugin = {
   id: "spectrumBackdrop",
   beforeDatasetsDraw(chart) {
@@ -1874,9 +2278,9 @@ const spectrumBackdropPlugin = {
     const gradient = ctx.createLinearGradient(area.left, 0, area.right, 0);
     const steps = 24;
     for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const rgb = wavelengthToRgb(xScale.min + t * (xScale.max - xScale.min));
-      gradient.addColorStop(t, "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.16)");
+      const f = i / steps;
+      const rgb = wavelengthToRgb(xScale.min + f * (xScale.max - xScale.min));
+      gradient.addColorStop(f, "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.22)");
     }
     ctx.save();
     ctx.fillStyle = gradient;
@@ -1886,392 +2290,170 @@ const spectrumBackdropPlugin = {
 };
 
 const COMPONENT_COLORS = [
-  "rgba(248, 113, 113, 0.9)",
-  "rgba(251, 191, 36, 0.9)",
-  "rgba(129, 230, 217, 0.9)",
-  "rgba(196, 181, 253, 0.9)",
-  "rgba(244, 114, 182, 0.9)",
-  "rgba(147, 197, 253, 0.9)",
-  "rgba(253, 186, 116, 0.9)",
-  "rgba(167, 243, 208, 0.9)",
-  "rgba(216, 180, 254, 0.9)",
-  "rgba(252, 165, 165, 0.9)",
-  "rgba(134, 239, 172, 0.9)",
-  "rgba(253, 224, 71, 0.9)",
-  "rgba(125, 211, 252, 0.9)",
-  "rgba(240, 171, 252, 0.9)",
-  "rgba(254, 215, 170, 0.9)",
-  "rgba(153, 246, 228, 0.9)",
-  "rgba(191, 219, 254, 0.9)",
-  "rgba(254, 205, 211, 0.9)",
-  "rgba(221, 214, 254, 0.9)",
-  "rgba(187, 247, 208, 0.9)",
+  "rgba(248, 113, 113, 0.95)",
+  "rgba(251, 191, 36, 0.95)",
+  "rgba(196, 181, 253, 0.95)",
+  "rgba(244, 114, 182, 0.95)",
+  "rgba(129, 230, 217, 0.95)",
 ];
 
-/** Colour follows the line's own number, so adding or removing one never recolours the rest. */
+/** Colour follows the line's own number, so removing one never recolours the rest. */
 function componentColor(component) {
   const n = component && component.id ? component.id - 1 : 0;
   return COMPONENT_COLORS[n % COMPONENT_COLORS.length];
 }
 
 /**
- * Level status in one strip under the plot: the numbers as pills, the wordy parts behind a
- * toggle. This replaces the old "HUD" panel, which took a whole column of screen space and was
- * named after fighter-jet jargon nobody had explained.
+ * One level: (1) the computer fits the continuum and Earth's atmosphere while the kids watch,
+ * (2) it removes them with an animated before→after, (3) the kids place their own lines.
  */
-function LevelInfoStrip(props) {
-  const {
-    level,
-    axis,
-    absorb,
-    needsBaseline,
-    baselineLocked,
-    maxComponents,
-    lineCount,
-    scoredLineCount,
-    resolutionText,
-    completionSummary,
-  } = props;
-  const scored = scoredLineCount != null ? scoredLineCount : lineCount;
-  const drawn = lineCount;
-  return React.createElement(
-    "div",
-    { className: "level-info-strip" },
-    React.createElement(
-      "div",
-      { className: "info-pills" },
-      React.createElement(
-        "div",
-        { className: "metric-pill" },
-        drawn === scored
-          ? "Lines to fit: " + scored
-          : "Need " + scored + " of " + drawn + " drawn"
-      ),
-      React.createElement(
-        "div",
-        { className: "metric-pill" },
-        "Lines you may place: ",
-        maxComponents
-      ),
-      React.createElement(
-        "div",
-        { className: "metric-pill" },
-        "Pass within ",
-        level.errorThresholdPercent,
-        " % in ",
-        axis.unit
-      ),
-      resolutionText
-        ? React.createElement("div", { className: "metric-pill" }, resolutionText)
-        : null,
-      needsBaseline
-        ? React.createElement(
-            "div",
-            { className: "metric-pill" },
-            baselineLocked ? "Baseline locked" : "Baseline open"
-          )
-        : null
-    ),
-    React.createElement(
-      "details",
-      { className: "info-details" },
-      React.createElement("summary", null, "What do these numbers mean?"),
-      React.createElement(
-        "p",
-        { className: "info-status" },
-        axis.key === "nm"
-          ? "Wavelengths are real solar Fraunhofer lines. A line's strength is its depth as a fraction of the continuum behind it, so it means the same thing wherever the continuum happens to sit."
-          : "Frequencies are real astronomical lines (CDMS). A line's strength is a brightness temperature in kelvin, measured above the continuum."
-      ),
-      React.createElement(
-        "p",
-        { className: "info-status" },
-        "Optical depth τ₀ shapes each line: small τ₀ gives a Gaussian, large τ₀ saturates it into a flat ",
-        absorb ? "dark core" : "top",
-        "."
-      ),
-      React.createElement(
-        "p",
-        { className: "info-status" },
-        "The widths belong to the spectrograph, not to the gas — nothing can look sharper than the instrument's resolution. That is why one dark Mg b feature here splits into a triplet in the close-up level."
-      ),
-      completionSummary
-        ? React.createElement(
-            "table",
-            { className: "lines-table" },
-            React.createElement(
-              "thead",
-              null,
-              React.createElement(
-                "tr",
-                null,
-                React.createElement("th", null, "True (" + axis.unit + ")"),
-                React.createElement("th", null, axis.key === "nm" ? "Element" : "Molecule"),
-                React.createElement("th", null, "Fitted (" + axis.unit + ")"),
-                React.createElement("th", { className: "error-cell" }, "Error %")
-              )
-            ),
-            React.createElement(
-              "tbody",
-              null,
-              completionSummary.lineErrors.map((le, idx) => {
-                const fitted = le.matchedGaussian ? le.matchedGaussian.center : null;
-                const closest = findClosestCatalogLine(fitted, axis.key);
-                const tolerance = (level.xMax - level.xMin) * 0.02;
-                return React.createElement(
-                  "tr",
-                  { key: idx },
-                  React.createElement("td", null, formatAxisValue(le.line.center, axis.key)),
-                  React.createElement(
-                    "td",
-                    null,
-                    le.line.knownLine
-                      ? le.line.transition
-                        ? le.line.label + " " + le.line.transition
-                        : le.line.label || "Known"
-                      : React.createElement("span", { className: "unknown-label" }, "Unknown line")
-                  ),
-                  React.createElement(
-                    "td",
-                    null,
-                    fitted != null
-                      ? React.createElement(
-                          "span",
-                          null,
-                          formatAxisValue(fitted, axis.key),
-                          closest && Math.abs(closest.value - fitted) < tolerance
-                            ? React.createElement(
-                                "span",
-                                { style: { marginLeft: 6, opacity: 0.85, fontSize: "0.75rem" } },
-                                "→ ",
-                                closest.species
-                              )
-                            : null
-                        )
-                      : "—"
-                  ),
-                  React.createElement(
-                    "td",
-                    { className: "error-cell" },
-                    le.percentError == null ? "—" : le.percentError.toFixed(2)
-                  )
-                );
-              })
-            )
-          )
-        : null,
-      completionSummary && completionSummary.extraLineCount > 0
-        ? React.createElement(
-            "p",
-            { className: "info-status info-bonus" },
-            describeBonusLines(completionSummary)
-          )
-        : null
-    )
-  );
-}
-
 function SpectrumGameView(props) {
-  const { level, onCompletion } = props;
-  const axis = axisOf(level);
+  const { level, lang, onCompletion } = props;
   const absorb = isAbsorption(level.mode);
-  const needsBaseline = levelNeedsBaselinePhase(level);
-  const trueContinuum = continuumSpec(level);
-  const scienceTruth = React.useMemo(
-    () => scienceLinesOf(level.trueLines),
-    [level.trueLines]
-  );
-  const telluricTruth = React.useMemo(
-    () => telluricLinesOf(level.trueLines),
-    [level.trueLines]
-  );
+  const axis = axisOf(level);
+  const scienceTruth = React.useMemo(() => scienceLinesOf(level.trueLines), [level]);
+  const telluricTruth = React.useMemo(() => telluricLinesOf(level.trueLines), [level]);
   const ranges = React.useMemo(() => sliderRanges(level), [level]);
-  const defaults = React.useMemo(() => componentDefaults(level), [level]);
+  const coarseX = React.useMemo(() => linspace(level.xMin, level.xMax, 500), [level]);
+  const maxComponents = maxComponentsForLevel(level);
   const [spectrum] = React.useState(() => generateSpectrum(level));
   const [continuumFit, setContinuumFit] = React.useState(() => continuumDefaults(level));
-  const [telluricComponents, setTelluricComponents] = React.useState(() =>
-    seedTelluricComponents(level)
-  );
-  const [components, setComponents] = React.useState(() =>
-    needsBaseline
-      ? []
-      : [
-          {
-            id: 1,
-            amplitude: defaults.amplitude,
-            center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-            sigma: defaults.sigma,
-            tau: defaults.tau,
-            role: "science",
-          },
-        ]
-  );
-  const [selectedId, setSelectedId] = React.useState(needsBaseline ? null : 1);
-  const [selectedTelluricId, setSelectedTelluricId] = React.useState(
-    () => (telluricComponents[0] && telluricComponents[0].id) || null
-  );
-  const [phase, setPhase] = React.useState(needsBaseline ? "baseline" : "lines");
-  const [baselineLocked, setBaselineLocked] = React.useState(!needsBaseline);
-  const [showResidual, setShowResidual] = React.useState(false);
-  const [logY, setLogY] = React.useState(false);
+  const [telluricComponents, setTelluricComponents] = React.useState(() => seedTelluricComponents(level));
+  /** "look" → "fitting" → "fitted" → "removed" */
+  const [bgStep, setBgStep] = React.useState("look");
+  /** 0 = raw spectrum, 1 = background divided out (absorption) or subtracted (emission). */
+  const [mix, setMix] = React.useState(0);
+  const [components, setComponents] = React.useState([]);
+  const [selectedId, setSelectedId] = React.useState(null);
   const [chartCanvas, setChartCanvas] = React.useState(null);
-  const componentListRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const chartSignatureRef = React.useRef("");
   const clickHandlerRef = React.useRef(() => {});
-  const [mse, setMse] = React.useState(NaN);
-  const [fitPct, setFitPct] = React.useState(NaN);
-  const [completed, setCompleted] = React.useState(false);
-  const [completionSummary, setCompletionSummary] = React.useState(null);
+  const cancelAnimRef = React.useRef(null);
+  const linesOpen = bgStep === "removed";
 
-  const gradedScience = React.useMemo(
-    () => scienceTruth.filter(isGradedLine),
-    [scienceTruth]
-  );
-  const gradedTellurics = React.useMemo(
-    () => telluricTruth.filter(isGradedLine),
-    [telluricTruth]
-  );
-  const coarseX = React.useMemo(() => linspace(level.xMin, level.xMax, 500), [level]);
-  const maxComponents = maxComponentsForLevel(level);
-  const lockThreshold =
-    level.continuumLockPercent != null
-      ? level.continuumLockPercent
-      : DEFAULT_CONTINUUM_LOCK_PERCENT;
-
-  const lockedOrLiveContinuum = continuumFit;
+  React.useEffect(() => () => cancelAnimRef.current && cancelAnimRef.current(), []);
 
   const baselineModelY = React.useMemo(
+    () => composeSpectrum(spectrum.x, telluricComponents, continuumFit, level.mode, level.xMin, level.xMax),
+    [spectrum.x, telluricComponents, continuumFit, level]
+  );
+  const modelY = React.useMemo(
     () =>
-      composeSpectrum(
-        spectrum.x,
-        telluricComponents,
-        lockedOrLiveContinuum,
-        level.mode,
-        level.xMin,
-        level.xMax
-      ),
-    [spectrum.x, telluricComponents, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax]
+      composeSpectrum(spectrum.x, telluricComponents.concat(components), continuumFit, level.mode, level.xMin, level.xMax),
+    [spectrum.x, telluricComponents, components, continuumFit, level]
+  );
+  const fitPct = React.useMemo(
+    () => (components.length ? normalizedFitPercent(spectrum.y, modelY) : NaN),
+    [components.length, spectrum.y, modelY]
   );
 
-  const modelY = React.useMemo(() => {
-    if (needsBaseline && phase === "baseline" && !baselineLocked) {
-      return baselineModelY;
+  function startAnimation(ms, onFrame, onDone) {
+    if (cancelAnimRef.current) cancelAnimRef.current();
+    cancelAnimRef.current = animate(ms, onFrame, onDone);
+  }
+
+  function handleFitBackground() {
+    setBgStep("fitting");
+    // Let the "thinking" label paint before the (short) search blocks the thread.
+    setTimeout(() => {
+      const startC = continuumFit;
+      const startT = telluricComponents;
+      const result = autoFitBaseline(spectrum, level, startC, startT);
+      startAnimation(
+        2200,
+        (f) => {
+          setContinuumFit(lerpParams(startC, result.continuum, f));
+          setTelluricComponents(startT.map((c, i) => lerpParams(c, result.tellurics[i], f)));
+        },
+        () => setBgStep("fitted")
+      );
+    }, 50);
+  }
+
+  function animateMixTo(target) {
+    const from = mix;
+    startAnimation(1200, (f) => setMix(from + (target - from) * f));
+  }
+
+  function handleRemoveBackground() {
+    setBgStep("removed");
+    animateMixTo(1);
+    if (!components.length) {
+      setComponents([newComponent(level, 1, (level.xMin + level.xMax) / 2)]);
+      setSelectedId(1);
     }
-    return composeSpectrum(
-      spectrum.x,
-      telluricComponents.concat(components),
-      lockedOrLiveContinuum,
-      level.mode,
-      level.xMin,
-      level.xMax
-    );
-  }, [
-    needsBaseline,
-    phase,
-    baselineLocked,
-    baselineModelY,
-    spectrum.x,
-    telluricComponents,
-    components,
-    lockedOrLiveContinuum,
-    level.mode,
-    level.xMin,
-    level.xMax,
-  ]);
+  }
 
-  const baselineFitPct = React.useMemo(
-    () =>
-      baselineResidualPercent(
-        spectrum,
-        lockedOrLiveContinuum,
-        telluricComponents,
-        scienceTruth,
-        level.mode,
-        level.xMin,
-        level.xMax
-      ),
-    [
-      spectrum,
-      lockedOrLiveContinuum,
-      telluricComponents,
-      scienceTruth,
-      level.mode,
-      level.xMin,
-      level.xMax,
-    ]
-  );
+  function handleAddComponent() {
+    if (!linesOpen || components.length >= maxComponents) return;
+    const nextId = components.length ? Math.max.apply(null, components.map((c) => c.id)) + 1 : 1;
+    const span = level.xMax - level.xMin;
+    const center = (level.xMin + level.xMax) / 2 + ((components.length % 5) - 2) * span * 0.05;
+    setComponents([newComponent(level, nextId, center)].concat(components));
+    setSelectedId(nextId);
+  }
 
-  const canLockBaseline =
-    needsBaseline &&
-    !baselineLocked &&
-    isFinite(baselineFitPct) &&
-    baselineFitPct <= lockThreshold;
+  function handleRemoveComponent(id) {
+    const next = components.filter((c) => c.id !== id);
+    setComponents(next);
+    if (id === selectedId) setSelectedId(next.length ? next[0].id : null);
+  }
 
-  React.useEffect(() => {
-    setMse(meanSquaredError(spectrum.y, modelY));
-    setFitPct(normalizedFitPercent(spectrum.y, modelY));
-  }, [modelY, spectrum.y]);
+  function handleUpdateComponent(id, field, value) {
+    setComponents((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+  }
+
+  function handleReset() {
+    if (cancelAnimRef.current) cancelAnimRef.current();
+    setContinuumFit(continuumDefaults(level));
+    setTelluricComponents(seedTelluricComponents(level));
+    setBgStep("look");
+    setMix(0);
+    setComponents([]);
+    setSelectedId(null);
+  }
+
+  function handleSubmit() {
+    const lineErrors = computeLineErrors(scienceTruth, components);
+    const meanErr = meanPercentError(lineErrors);
+    const withinCount = countLinesWithin(lineErrors, level.errorThresholdPercent);
+    const fittedCenters = lineErrors.map((le) => (le.matchedGaussian ? le.matchedGaussian.center : null));
+    onCompletion({
+      levelId: level.id,
+      lineErrors,
+      meanErr,
+      mse: meanSquaredError(spectrum.y, modelY),
+      stars: starsFromMeanError(meanErr, starBandsForLevel(level)),
+      sonification: sonifyAxisValues(fittedCenters, level),
+      passed: withinCount === scienceTruth.length,
+      withinCount,
+      gradedCount: scienceTruth.length,
+      thresholdPercent: level.errorThresholdPercent,
+    });
+  }
 
   function buildDatasets() {
-    const clip = (v) => (logY ? Math.max(LOG_Y_FLOOR, v) : v);
-    const toPoints = (xs, ys) => xs.map((xi, i) => ({ x: xi, y: clip(ys[i]) }));
-    const nearAtmosphere = (xi) => {
-      for (const line of telluricTruth) {
-        if (Math.abs(xi - line.center) <= line.sigma * 4) return true;
-      }
-      return false;
-    };
-    /**
-     * Emission subtracts the baseline, so lines stand above zero. Absorption divides by it —
-     * what an observer calls rectifying: the continuum flattens to 1 and each line dips to
-     * 1 − depth, so its depth can be read straight off the axis.
-     */
-    const residualFromBaseline = (ys) =>
-      absorb
-        ? ys.map((v, i) => (baselineModelY[i] > 0 ? v / baselineModelY[i] : NaN))
-        : ys.map((v, i) => v - baselineModelY[i]);
-    /** One line on its own against the rectified (or subtracted) zero point. */
-    const residualComponentY = (xs, component) =>
-      absorb ? lineTransmission(xs, component) : evaluateLineProfile(xs, component);
-    const residualView = showResidual && baselineLocked;
-    let observedY = spectrum.y;
-    let observedLabel = absorb ? "Observed spectrum (absorption)" : "Observed spectrum";
-    if (residualView) {
-      observedY = residualFromBaseline(spectrum.y);
-      observedLabel = absorb
-        ? telluricTruth.length
-          ? "Rectified (divided by continuum & atmosphere)"
-          : "Rectified (divided by the continuum)"
-        : telluricTruth.length
-          ? "Residual (continuum & atmosphere subtracted)"
-          : "Residual (continuum subtracted)";
-    }
-    // Amber telluric overlay only on the raw spectrum; residual has those dips removed.
-    const hasTellurics = telluricTruth.length > 0 && !residualView;
-    const scienceObs = hasTellurics
-      ? spectrum.x.map((xi, i) => ({
-          x: xi,
-          y: nearAtmosphere(xi) ? NaN : clip(observedY[i]),
-        }))
-      : toPoints(spectrum.x, observedY);
+    const blend = (raw, removed) => (mix === 0 ? raw : raw.map((v, i) => v + (removed[i] - v) * mix));
+    const removeBg = (ys) =>
+      absorb ? ys.map((v, i) => (baselineModelY[i] > 0 ? v / baselineModelY[i] : NaN)) : ys.map((v, i) => v - baselineModelY[i]);
+    const toPoints = (xs, ys) => xs.map((xi, i) => ({ x: xi, y: ys[i] }));
+    const nearAtmosphere = (xi) => telluricTruth.some((line) => Math.abs(xi - line.center) <= line.sigma * 4);
+    const observedY = blend(spectrum.y, removeBg(spectrum.y));
     const datasets = [
       {
-        label: hasTellurics ? observedLabel + " (solar)" : observedLabel,
-        data: scienceObs,
+        label: t(mix > 0.5 ? "observedRemoved" : "observed"),
+        data: spectrum.x.map((xi, i) => ({ x: xi, y: nearAtmosphere(xi) ? NaN : observedY[i] })),
         borderColor: "rgba(96, 165, 250, 1)",
-        borderWidth: 1.5,
+        borderWidth: 1.6,
         pointRadius: 0,
         spanGaps: false,
       },
     ];
-    if (hasTellurics) {
+    if (telluricTruth.length) {
       datasets.push({
-        label: "Atmosphere in data (telluric)",
-        data: spectrum.x.map((xi, i) => ({
-          x: xi,
-          y: nearAtmosphere(xi) ? clip(observedY[i]) : NaN,
-        })),
+        label: t("atmosphereData"),
+        data: spectrum.x.map((xi, i) => ({ x: xi, y: nearAtmosphere(xi) ? observedY[i] : NaN })),
         borderColor: TELLURIC_COLOR,
         borderWidth: 2.4,
         pointRadius: 0,
@@ -2279,60 +2461,31 @@ function SpectrumGameView(props) {
       });
     }
     datasets.push({
-      label:
-        phase === "baseline" && !baselineLocked ? "Baseline model" : "Model fit",
-      data: toPoints(
-        spectrum.x,
-        residualView ? residualFromBaseline(modelY) : modelY
-      ),
-      borderColor: "rgba(52, 211, 153, 1)",
-      borderWidth: 1.8,
+      label: t("background"),
+      data: toPoints(spectrum.x, blend(baselineModelY, removeBg(baselineModelY))),
+      borderColor: "rgba(203, 213, 225, 0.9)",
+      borderWidth: 2,
+      borderDash: [6, 5],
       pointRadius: 0,
     });
-    if (needsBaseline && !residualView) {
+    if (linesOpen && components.length) {
       datasets.push({
-        label: "Continuum",
-        data: toPoints(coarseX, evaluateContinuum(coarseX, lockedOrLiveContinuum, level.xMin, level.xMax)),
-        borderColor: "rgba(148, 163, 184, 0.85)",
-        borderWidth: 1.2,
-        borderDash: [2, 4],
+        label: t("yourModel"),
+        data: toPoints(spectrum.x, blend(modelY, removeBg(modelY))),
+        borderColor: "rgba(52, 211, 153, 1)",
+        borderWidth: 2.2,
         pointRadius: 0,
       });
-    }
-    if (!residualView) {
-      telluricComponents.forEach((component, idx) => {
-        datasets.push({
-          label: "Atmosphere fit " + (idx + 1),
-          data: toPoints(
-            coarseX,
-            componentCurve(coarseX, component, lockedOrLiveContinuum, level.mode, level.xMin, level.xMax)
-          ),
-          borderColor: TELLURIC_COLOR,
-          borderWidth: component.id === selectedTelluricId ? 2.2 : 1.4,
-          borderDash: [6, 3],
-          pointRadius: 0,
-        });
-      });
-    }
-    if (phase === "lines" || baselineLocked || !needsBaseline) {
+      const coarseCont = evaluateContinuum(coarseX, continuumFit, level.xMin, level.xMax);
       components.forEach((component) => {
+        const alone = absorb ? lineTransmission(coarseX, component) : evaluateLineProfile(coarseX, component);
+        const onCont = alone.map((v, i) => (absorb ? coarseCont[i] * v : coarseCont[i] + v));
         datasets.push({
-          label: "Line " + component.id,
-          data: toPoints(
-            coarseX,
-            residualView
-              ? residualComponentY(coarseX, component)
-              : componentCurve(
-                  coarseX,
-                  component,
-                  lockedOrLiveContinuum,
-                  level.mode,
-                  level.xMin,
-                  level.xMax
-                )
-          ),
+          label: t("lineN", { n: component.id }),
+          data: toPoints(coarseX, blend(onCont, alone)),
           borderColor: componentColor(component),
-          borderWidth: component.id === selectedId ? 2 : 1,
+          borderWidth: component.id === selectedId ? 2.6 : 1.4,
+          hideInLegend: true,
           borderDash: [4, 3],
           pointRadius: 0,
         });
@@ -2344,40 +2497,23 @@ function SpectrumGameView(props) {
   React.useEffect(() => {
     clickHandlerRef.current = (evt) => {
       const chart = chartRef.current;
-      if (!chart || !chart.scales || !chart.scales.x) return;
+      if (!linesOpen || selectedId == null || !chart || !chart.scales.x) return;
       const value = chart.scales.x.getValueForPixel(evt.x);
       if (value == null || !isFinite(value)) return;
-      const clamped = Math.min(level.xMax, Math.max(level.xMin, value));
-      if (phase === "baseline" && !baselineLocked && selectedTelluricId != null) {
-        setTelluricComponents((prev) =>
-          prev.map((c) => (c.id === selectedTelluricId ? { ...c, center: clamped } : c))
-        );
-        return;
-      }
-      if ((phase === "lines" || !needsBaseline) && selectedId != null) {
-        handleUpdateComponent(selectedId, "center", clamped);
-      }
+      handleUpdateComponent(selectedId, "center", Math.min(level.xMax, Math.max(level.xMin, value)));
     };
   });
 
   React.useEffect(() => {
     if (!chartCanvas || typeof Chart !== "function") return;
-    const signature =
-      level.id +
-      "|" +
-      (logY ? "log" : "lin") +
-      "|" +
-      (showResidual ? "res" : "raw") +
-      "|" +
-      phase;
+    const signature = level.id + "|" + lang;
     if (chartRef.current && chartSignatureRef.current !== signature) {
       chartRef.current.destroy();
       chartRef.current = null;
     }
+    const yTitle = t(mix > 0.5 ? "yRemoved" : "yRaw");
     if (!chartRef.current) {
-      const ctx = chartCanvas.getContext("2d");
-      if (!ctx) return;
-      chartRef.current = new Chart(ctx, {
+      chartRef.current = new Chart(chartCanvas.getContext("2d"), {
         type: "line",
         data: { datasets: buildDatasets() },
         plugins: level.showSpectrumColors ? [spectrumBackdropPlugin] : [],
@@ -2389,7 +2525,14 @@ function SpectrumGameView(props) {
           parsing: false,
           onClick: (evt) => clickHandlerRef.current(evt),
           plugins: {
-            legend: { labels: { color: "#e5e5ff", boxWidth: 12, font: { size: 10 } } },
+            legend: {
+              labels: {
+                color: "#e5e5ff",
+                boxWidth: 14,
+                font: { size: 13 },
+                filter: (item, data) => !data.datasets[item.datasetIndex].hideInLegend,
+              },
+            },
             tooltip: { enabled: false },
           },
           scales: {
@@ -2397,24 +2540,14 @@ function SpectrumGameView(props) {
               type: "linear",
               min: level.xMin,
               max: level.xMax,
-              ticks: { color: "#a5b4fc", maxTicksLimit: 8 },
-              title: { display: true, text: axis.axisTitle, color: "#e5e5ff" },
+              ticks: { color: "#a5b4fc", maxTicksLimit: 8, font: { size: 13 } },
+              title: { display: true, text: t(axis.key === "nm" ? "axisNm" : "axisGHz"), color: "#e5e5ff", font: { size: 14 } },
             },
             y: {
-              type: logY ? "logarithmic" : "linear",
-              beginAtZero: !logY,
-              ticks: { color: "#a5b4fc" },
-              title: {
-                display: true,
-                text: showResidual && baselineLocked
-                  ? absorb
-                    ? "Rectified intensity (continuum = 1)"
-                    : "Residual brightness (K)"
-                  : absorb
-                    ? "Intensity (continuum normalised)"
-                    : "Brightness temperature (K)",
-                color: "#e5e5ff",
-              },
+              type: "linear",
+              beginAtZero: true,
+              ticks: { color: "#a5b4fc", font: { size: 13 } },
+              title: { display: true, text: yTitle, color: "#e5e5ff", font: { size: 14 } },
             },
           },
         },
@@ -2423,792 +2556,288 @@ function SpectrumGameView(props) {
       chartCanvas.style.cursor = "crosshair";
     } else {
       chartRef.current.data.datasets = buildDatasets();
+      chartRef.current.options.scales.y.title.text = yTitle;
       chartRef.current.update("none");
     }
-  }, [
-    chartCanvas,
-    level,
-    logY,
-    spectrum,
-    modelY,
-    components,
-    telluricComponents,
-    selectedId,
-    selectedTelluricId,
-    continuumFit,
-    phase,
-    baselineLocked,
-    showResidual,
-  ]);
+  }, [chartCanvas, level, lang, spectrum, modelY, baselineModelY, components, selectedId, mix, linesOpen]);
 
   React.useEffect(
     () => () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
+      if (chartRef.current) chartRef.current.destroy();
+      chartRef.current = null;
     },
     []
   );
 
-  function handleAddComponent() {
-    if (needsBaseline && !baselineLocked) return;
-    setComponents((prev) => {
-      if (prev.length >= maxComponents) return prev;
-      const nextId = prev.length ? Math.max.apply(null, prev.map((c) => c.id)) + 1 : 1;
-      // Always spawn near mid-band — never on residual peaks (that was giving away line centres).
-      const mid = (level.xMin + level.xMax) / 2;
-      const span = level.xMax - level.xMin;
-      const stagger = ((prev.length % 5) - 2) * span * 0.015;
-      const next = {
-        id: nextId,
-        amplitude: defaults.amplitude,
-        center: Math.min(level.xMax, Math.max(level.xMin, mid + stagger)),
-        sigma: defaults.sigma,
-        tau: defaults.tau,
-        role: "science",
-      };
-      setSelectedId(nextId);
-      // Newest first: with a long list the bottom is off screen, so appending looked like nothing
-      // had happened.
-      return [next].concat(prev);
-    });
-    if (componentListRef.current) componentListRef.current.scrollTop = 0;
-  }
-
-  function handleRemoveComponent(id) {
-    setComponents((prev) => {
-      if (prev.length <= 1 && !needsBaseline) return prev;
-      const next = prev.filter((c) => c.id !== id);
-      if (id === selectedId && next.length) setSelectedId(next[0].id);
-      else if (!next.length) setSelectedId(null);
-      return next;
-    });
-  }
-
-  function handleUpdateComponent(id, field, value) {
-    setComponents((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
-  }
-
-  function handleUpdateTelluric(id, field, value) {
-    if (baselineLocked) return;
-    setTelluricComponents((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
-    );
-  }
-
-  function handleLockBaseline() {
-    if (!canLockBaseline) return;
-    setBaselineLocked(true);
-    setPhase("lines");
-    setShowResidual(true);
-    if (!components.length) {
-      const mid = spectrum.x[Math.floor(spectrum.x.length / 2)];
-      setComponents([
-        {
-          id: 1,
-          amplitude: defaults.amplitude,
-          center: mid,
-          sigma: defaults.sigma,
-          tau: defaults.tau,
-          role: "science",
-        },
-      ]);
-      setSelectedId(1);
-    }
-  }
-
-  function handleUnlockBaseline() {
-    setBaselineLocked(false);
-    setPhase("baseline");
-    setShowResidual(false);
-    setCompleted(false);
-    setCompletionSummary(null);
-  }
-
-  function handleReset() {
-    setContinuumFit(continuumDefaults(level));
-    setTelluricComponents(seedTelluricComponents(level));
-    setBaselineLocked(!needsBaseline);
-    setPhase(needsBaseline ? "baseline" : "lines");
-    setShowResidual(false);
-    setComponents(
-      needsBaseline
-        ? []
-        : [
-            {
-              id: 1,
-              amplitude: defaults.amplitude,
-              center: spectrum.x[Math.floor(spectrum.x.length / 2)],
-              sigma: defaults.sigma,
-              tau: defaults.tau,
-              role: "science",
-            },
-          ]
-    );
-    setSelectedId(needsBaseline ? null : 1);
-    setSelectedTelluricId(
-      (seedTelluricComponents(level)[0] && seedTelluricComponents(level)[0].id) || null
-    );
-    setCompleted(false);
-    setCompletionSummary(null);
-  }
-
-  function handleSubmit() {
-    if (needsBaseline && !baselineLocked) return;
-    const lineErrors = computeLineErrors(gradedScience, components);
-    const allScienceWithin = lineErrors.every((le) =>
-      lineWithinThreshold(le, level.errorThresholdPercent)
-    );
-    const telluricErrors = computeLineErrors(gradedTellurics, telluricComponents);
-    const allTelluricWithin =
-      !gradedTellurics.length ||
-      telluricErrors.every((le) => lineWithinThreshold(le, level.errorThresholdPercent));
-    const claimed = new Set(lineErrors.map((le) => le.matchedGaussian && le.matchedGaussian.id));
-    const spare = components.filter((c) => !claimed.has(c.id));
-    const extraLines = scienceTruth.filter((line) => !isGradedLine(line));
-    const bonusErrors = computeLineErrors(extraLines, spare).filter((le) =>
-      lineWithinThreshold(le, level.errorThresholdPercent)
-    );
-    const meanErr = meanPercentError(lineErrors.concat(telluricErrors));
-    const stars = starsFromMeanError(meanErr, starBandsForLevel(level));
-    const fittedCenters = lineErrors.map((le) =>
-      le.matchedGaussian ? le.matchedGaussian.center : null
-    );
-    const sonification = sonifyAxisValues(fittedCenters, level);
-    const passed = allScienceWithin && allTelluricWithin && (!needsBaseline || baselineLocked);
-    const summary = {
-      levelId: level.id,
-      levelName: level.name,
-      axis: level.axis || "GHz",
-      mode: level.mode || "emission",
-      track: level.track,
-      lineErrors: lineErrors.concat(telluricErrors),
-      bonusErrors,
-      extraLineCount: extraLines.length,
-      mse,
-      fitPct,
-      meanErr,
-      stars,
-      sonification,
-      passed,
-      withinCount:
-        countLinesWithin(lineErrors, level.errorThresholdPercent) +
-        countLinesWithin(telluricErrors, level.errorThresholdPercent),
-      gradedCount: gradedScience.length + gradedTellurics.length,
-      thresholdPercent: level.errorThresholdPercent,
-      baselineLocked: !needsBaseline || baselineLocked,
-      continuumResults: continuumResults(continuumFit, trueContinuum),
-    };
-    setCompletionSummary(summary);
-    setCompleted(passed);
-    // Always open the result modal — a green spectrum match can still fail the center check.
-    onCompletion(summary);
-  }
-
-  const liveScienceErrors = React.useMemo(
-    () => computeLineErrors(gradedScience, components),
-    [gradedScience, components]
-  );
-  const liveTelluricErrors = React.useMemo(
-    () => computeLineErrors(gradedTellurics, telluricComponents),
-    [gradedTellurics, telluricComponents]
-  );
-  const liveWithinCount =
-    countLinesWithin(liveScienceErrors, level.errorThresholdPercent) +
-    countLinesWithin(liveTelluricErrors, level.errorThresholdPercent);
-  const liveGradedCount = gradedScience.length + gradedTellurics.length;
-  const centersReady =
-    liveGradedCount > 0 &&
-    liveWithinCount === liveGradedCount &&
-    (!needsBaseline || baselineLocked);
-
+  const liveErrors = React.useMemo(() => computeLineErrors(scienceTruth, components), [scienceTruth, components]);
+  const liveWithin = countLinesWithin(liveErrors, level.errorThresholdPercent);
+  const ready = linesOpen && liveWithin === scienceTruth.length;
   const fitQuality = describeFitQuality(fitPct);
-  const amplitudeInfo = amplitudeMeta(level);
-  const resolutionText = describeResolution(level);
+  const nLines = scienceTruth.length;
 
-  return React.createElement(
+  const prevWithinRef = React.useRef(0);
+  React.useEffect(() => {
+    if (liveWithin > prevWithinRef.current) playSfx("ding");
+    prevWithinRef.current = liveWithin;
+  }, [liveWithin]);
+
+  const mascot =
+    bgStep === "look"
+      ? { face: "🕵️", text: t("mascotHello") }
+      : bgStep === "fitting"
+      ? { face: "🤖", text: t("mascotFitting") }
+      : bgStep === "fitted"
+      ? { face: "😃", text: t("mascotFitted") }
+      : ready
+      ? { face: "🤩", text: t("mascotReady") }
+      : liveWithin > 0
+      ? { face: "😃", text: t("mascotSome", { n: liveWithin }) }
+      : { face: "🕵️", text: t(absorb ? "mascotStartAbs" : "mascotStartEm") };
+
+  const step1 = h(
     "div",
-    { className: "game-layout" },
-    React.createElement(
+    { className: "panel step-panel" + (linesOpen ? " step-done" : "") },
+    h("div", { className: "panel-title" }, t("step1"), linesOpen ? " ✓" : ""),
+    h("p", { className: "step-text" }, t(level.track === "solar" ? "bgExplainSolar" : "bgExplainDust")),
+    telluricTruth.length > 0 && h("p", { className: "step-text step-atmos" }, t("bgExplainAtmos")),
+    bgStep === "look" &&
+      h("button", { type: "button", className: "primary-button large-button", onClick: handleFitBackground }, t("fitBg")),
+    bgStep === "fitting" &&
+      h("button", { type: "button", className: "primary-button large-button thinking", disabled: true }, t("fitting")),
+    bgStep === "fitted" &&
+      h(
+        React.Fragment,
+        null,
+        h("p", { className: "step-text step-good" }, t("bgFitted")),
+        h("button", { type: "button", className: "primary-button large-button", onClick: handleRemoveBackground }, t("removeBg"))
+      ),
+    linesOpen && h("p", { className: "step-text step-good" }, t("removed"))
+  );
+
+  const step2 = h(
+    "div",
+    { className: "panel step-panel fit-panel" + (linesOpen ? "" : " step-locked") },
+    h(
       "div",
-      { className: "panel plot-panel" },
-      React.createElement(
-        "div",
-        { className: "plot-header" },
-        React.createElement("div", { className: "panel-title" }, level.name),
-        React.createElement(
+      { className: "controls-header" },
+      h("span", { className: "panel-title" }, t("step2")),
+      linesOpen &&
+        h(
           "div",
-          { className: "plot-header-right" },
-          React.createElement(
-            "span",
-            { className: "mode-pill " + (absorb ? "absorption" : "emission") },
-            absorb ? "Absorption" : "Emission"
-          ),
-          needsBaseline &&
-            React.createElement(
-              "span",
-              {
-                className:
-                  "mode-pill " + (baselineLocked ? "emission" : "absorption"),
-              },
-              baselineLocked ? "Phase 2 · Lines" : "Phase 1 · Baseline"
-            ),
-          baselineLocked &&
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                className: "secondary-button tiny-button",
-                onClick: () => setShowResidual((v) => !v),
-                "aria-pressed": showResidual,
-              },
-              showResidual
-                ? "Show raw spectrum"
-                : absorb
-                  ? "Rectify (÷ continuum)"
-                  : "Show residual"
-            ),
-          level.allowLogY &&
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                className: "secondary-button tiny-button",
-                onClick: () => setLogY((v) => !v),
-                "aria-pressed": logY,
-              },
-              logY ? "Linear scale" : "Stretch weak lines (log)"
-            )
-        )
-      ),
-      level.blurb && React.createElement("p", { className: "level-blurb" }, level.blurb),
-      React.createElement(
-        "div",
-        { className: "plot-wrap" },
-        React.createElement("canvas", { ref: setChartCanvas, className: "plot-canvas" })
-      ),
-      React.createElement(
-        "div",
-        { className: "fit-quality " + fitQuality.cls },
-        "Fit quality: ",
-        fitQuality.label,
-        " (spectrum mismatch ≈ ",
-        Number.isFinite(fitPct) ? fitPct.toFixed(1) : "—",
-        "% of intensity range)",
-        needsBaseline && !baselineLocked
-          ? " · Baseline residual ≈ " +
-            (Number.isFinite(baselineFitPct) ? baselineFitPct.toFixed(1) : "—") +
-            "% (lock at ≤ " +
-            lockThreshold +
-            "%)"
-          : ""
-      ),
-      React.createElement(
-        "div",
-        { className: "plot-hint" },
-        needsBaseline && !baselineLocked
-          ? "Phase 1: fit the continuum and the amber atmospheric dips in the spectrum" +
-            (telluricComponents.length ? " (Earth's air, not the Sun)" : "") +
-            ", then Lock baseline. Science lines stay locked until then."
-          : telluricTruth.length
-            ? showResidual
-              ? "Rectified: divided by your continuum and amber atmosphere, so the continuum is a flat 1 and every solar line dips to 1 minus its depth. Click the plot to place the selected line."
-              : "Amber stretches in the spectrum are telluric (atmosphere). Fit those in Phase 1; blue stretches are solar. Click the plot to place the selected line."
-            : showResidual
-              ? absorb
-                ? "Rectified: divided by your continuum, so line depths read straight off the axis. Click the plot to place the selected line."
-                : "Residual: continuum subtracted, so the lines stand alone above zero. Click the plot to place the selected line."
-              : "Click the plot to move the selected line there. Fit each separate peak you can see — blended shoulders are optional bonus."
-      ),
-      completed &&
-        React.createElement(
-          "div",
-          { className: "completion-banner" },
-          "Level completed! Every line fitted within ",
-          level.errorThresholdPercent,
-          "% in ",
-          axis.key === "nm" ? "wavelength" : "center frequency",
-          "."
-        ),
-      React.createElement(LevelInfoStrip, {
-        level,
-        axis,
-        absorb,
-        needsBaseline,
-        baselineLocked,
-        maxComponents,
-        lineCount: scienceTruth.length + telluricTruth.length,
-        scoredLineCount: gradedScience.length + gradedTellurics.length,
-        resolutionText,
-        completionSummary,
-      })
-    ),
-    React.createElement(
-      "div",
-      { className: "controls-column" },
-      React.createElement(
-        "div",
-        { className: "panel fit-panel" + (needsBaseline ? " fit-panel-phased" : "") },
-        needsBaseline &&
-          React.createElement(
-            "div",
-            { className: "fit-tabs", role: "tablist", "aria-label": "Fitting steps" },
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                role: "tab",
-                className: "fit-tab" + (phase === "baseline" ? " active" : ""),
-                "aria-selected": phase === "baseline",
-                onClick: () => setPhase("baseline"),
-              },
-              "1 · Baseline",
-              baselineLocked ? " ✓" : ""
-            ),
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                role: "tab",
-                className: "fit-tab" + (phase === "lines" ? " active" : ""),
-                "aria-selected": phase === "lines",
-                disabled: !baselineLocked,
-                title: baselineLocked
-                  ? "Fit the science lines"
-                  : "Lock the baseline first",
-                onClick: () => {
-                  if (baselineLocked) setPhase("lines");
-                },
-              },
-              "2 · Science lines"
-            )
-          ),
-        needsBaseline &&
-          phase === "baseline" &&
-          React.createElement(
-            "div",
-            { className: "fit-subpage", role: "tabpanel" },
-          React.createElement(
-            "div",
-            { className: "controls-header" },
-            React.createElement(
-              "span",
-              { className: "panel-title" },
-              baselineLocked ? "Baseline (locked)" : "Fit continuum & atmosphere"
-            ),
-            React.createElement(
-              "div",
-              { className: "controls-header-right" },
-              !baselineLocked &&
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "primary-button",
-                    onClick: handleLockBaseline,
-                    disabled: !canLockBaseline,
-                    title: !canLockBaseline
-                      ? "Baseline residual still above " + lockThreshold + "%"
-                      : "Lock continuum and atmosphere",
-                  },
-                  "Lock baseline"
-                ),
-              baselineLocked &&
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "secondary-button tiny-button",
-                    onClick: handleUnlockBaseline,
-                  },
-                  "Unlock"
-                )
-            )
-          ),
-          React.createElement(
-            "p",
-            { className: "param-note" },
-            "The continuum is normalised: it is fixed at ",
-            continuumFit.type === "powerLaw"
-              ? (trueContinuum.refBrightnessK || 1).toFixed(2) + " K"
-              : "1.00",
-            " at ",
-            formatAxisValue(continuumRefX(level.xMin, level.xMax), axis.key),
-            " ",
-            axis.unit,
-            ", the middle of the band. There is no brightness to fit — only the physics of its shape."
-          ),
-          continuumFit.type === "solar" &&
-            React.createElement(
-              "div",
-              { className: "continuum-controls" },
-              React.createElement(ParamSlider, {
-                label: "Solar surface temperature",
-                display: Math.round(continuumFit.temperatureK) + " K",
-                note: "Planck curve: hotter shifts the peak to the blue (Wien)",
-                min: 4000,
-                max: 8000,
-                step: 5,
-                fineStep: 1,
-                value: continuumFit.temperatureK,
-                disabled: baselineLocked,
-                onChange: (v) =>
-                  setContinuumFit((prev) => ({ ...prev, temperatureK: v })),
-              })
-            ),
-          continuumFit.type === "powerLaw" &&
-            React.createElement(
-              "div",
-              { className: "continuum-controls" },
-              React.createElement(ParamSlider, {
-                label: "Dust spectral index α",
-                display: continuumFit.index.toFixed(2),
-                note:
-                  "Dust emission goes as ν^α, so α = 2 + β for emissivity index β = " +
-                  (continuumFit.index - 2).toFixed(2),
-                min: 0,
-                max: 5,
-                step: 0.02,
-                fineStep: 0.005,
-                value: continuumFit.index,
-                disabled: baselineLocked,
-                onChange: (v) => setContinuumFit((prev) => ({ ...prev, index: v })),
-              })
-            ),
-          telluricComponents.length > 0 &&
-            React.createElement(
-              "div",
-              { className: "telluric-block" },
-              React.createElement(
-                "div",
-                { className: "telluric-legend" },
-                React.createElement("span", {
-                  className: "component-swatch",
-                  style: { background: TELLURIC_COLOR },
-                }),
-                "Atmosphere (telluric) — amber in the spectrum; Earth's air, not the Sun"
-              ),
-              continuumFit.type === "solar" &&
-                React.createElement(ParamSlider, {
-                  label: "Telluric reddening — airmass",
-                  display: continuumFit.airmass.toFixed(3) + " airmasses",
-                  note:
-                    "Rayleigh scattering goes as λ⁻⁴, so more air means a redder Sun: τ(" +
-                    RAYLEIGH_REF_NM +
-                    " nm) = " +
-                    (RAYLEIGH_TAU_550 * continuumFit.airmass).toFixed(3),
-                  min: 1,
-                  max: 3,
-                  step: 0.01,
-                  fineStep: 0.001,
-                  value: continuumFit.airmass,
-                  disabled: baselineLocked,
-                  onChange: (v) => setContinuumFit((prev) => ({ ...prev, airmass: v })),
-                }),
-              React.createElement(
-                "div",
-                { className: "component-grid" },
-                telluricComponents.map((component, idx) =>
-                  React.createElement(
-                    "div",
-                    {
-                      key: component.id,
-                      className:
-                        "gaussian-row telluric-row" +
-                        (component.id === selectedTelluricId ? " gaussian-row-selected" : ""),
-                      onClick: () => {
-                        if (!baselineLocked) setSelectedTelluricId(component.id);
-                      },
-                    },
-                    React.createElement(
-                      "div",
-                      { className: "gaussian-row-header" },
-                      React.createElement(
-                        "span",
-                        null,
-                        React.createElement("span", {
-                          className: "component-swatch",
-                          style: { background: TELLURIC_COLOR },
-                        }),
-                        "Atmosphere ",
-                        idx + 1,
-                        telluricTruth[idx]
-                          ? " · " + lineSpeciesLabel(telluricTruth[idx])
-                          : ""
-                      )
-                    ),
-                    React.createElement(ParamSlider, {
-                      label: amplitudeInfo.label,
-                      display: amplitudeInfo.format(component.amplitude),
-                      min: ranges.amplitudeMin,
-                      max: ranges.amplitudeMax,
-                      step: ranges.amplitudeStep,
-                      fineStep: ranges.amplitudeFineStep,
-                      value: component.amplitude,
-                      disabled: baselineLocked,
-                      onChange: (v) => handleUpdateTelluric(component.id, "amplitude", v),
-                    }),
-                    React.createElement(ParamSlider, {
-                      label: axis.centerLabel,
-                      display: formatAxisValue(component.center, axis.key) + " " + axis.unit,
-                      min: level.xMin,
-                      max: level.xMax,
-                      step: ranges.centerStep,
-                      fineStep: ranges.centerFineStep,
-                      value: component.center,
-                      disabled: baselineLocked,
-                      onChange: (v) => handleUpdateTelluric(component.id, "center", v),
-                    }),
-                    React.createElement(ParamSlider, {
-                      label: "Width σ",
-                      display: component.sigma.toFixed(3) + " " + axis.unit,
-                      note: describeWidth(component.sigma, component.center, axis.key),
-                      min: ranges.sigmaMin,
-                      max: ranges.sigmaMax,
-                      step: ranges.sigmaStep,
-                      fineStep: ranges.sigmaFineStep,
-                      value: component.sigma,
-                      disabled: baselineLocked,
-                      onChange: (v) => handleUpdateTelluric(component.id, "sigma", v),
-                    })
-                  )
-                )
-              )
-            )
-        ),
-        (!needsBaseline || phase === "lines") &&
-          React.createElement(
-            "div",
-            {
-              className: needsBaseline ? "fit-subpage" : "fit-subpage fit-subpage-solo",
-              role: needsBaseline ? "tabpanel" : undefined,
-            },
-            React.createElement(
-              "div",
-              { className: "controls-header" },
-              React.createElement(
-                "span",
-                { className: "panel-title" },
-                needsBaseline ? "Fit science lines" : "Model lines"
-              ),
-              React.createElement(
-                "div",
-                { className: "controls-header-right" },
-                React.createElement(
-                  "span",
-                  { className: "count-label" },
-                  "Lines: ",
-                  components.length,
-                  " / ",
-                  maxComponents
-                ),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "secondary-button",
-                    onClick: handleAddComponent,
-                    disabled:
-                      components.length >= maxComponents ||
-                      (needsBaseline && !baselineLocked),
-                    title: "Add a new line at the top of the list",
-                  },
-                  "+ Add line"
-                )
-              )
-            ),
-            needsBaseline &&
-              !baselineLocked &&
-              React.createElement(
-                "p",
-                { className: "phase-lock-hint" },
-                "Science-line controls unlock after you lock the baseline."
-              ),
-            React.createElement(
-              "div",
-              { className: "component-list component-grid", ref: componentListRef },
-              components.map((component) =>
-                React.createElement(
-                  "div",
-                  {
-                    key: component.id,
-                    className:
-                      "gaussian-row" +
-                      (component.id === selectedId ? " gaussian-row-selected" : ""),
-                    onClick: () => {
-                      if (!needsBaseline || baselineLocked) setSelectedId(component.id);
-                    },
-                  },
-                  React.createElement(
-                    "div",
-                    { className: "gaussian-row-header" },
-                    React.createElement(
-                      "span",
-                      null,
-                      React.createElement("span", {
-                        className: "component-swatch",
-                        style: { background: componentColor(component) },
-                      }),
-                      "Line ",
-                      component.id,
-                      component.id === selectedId
-                        ? React.createElement("span", { className: "selected-tag" }, "selected")
-                        : null
-                    ),
-                    components.length > 1 &&
-                      React.createElement(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button tiny-button remove-line-button",
-                          title: "Take line " + component.id + " out of your model",
-                          onClick: (e) => {
-                            e.stopPropagation();
-                            handleRemoveComponent(component.id);
-                          },
-                        },
-                        "− Remove line ",
-                        component.id
-                      )
-                  ),
-                  React.createElement(ParamSlider, {
-                    label: amplitudeInfo.label,
-                    display: amplitudeInfo.format(component.amplitude),
-                    note: amplitudeInfo.hint,
-                    min: ranges.amplitudeMin,
-                    max: ranges.amplitudeMax,
-                    step: ranges.amplitudeStep,
-                    fineStep: ranges.amplitudeFineStep,
-                    value: component.amplitude,
-                    onChange: (v) => handleUpdateComponent(component.id, "amplitude", v),
-                  }),
-                  React.createElement(ParamSlider, {
-                    label: axis.centerLabel,
-                    display: formatAxisValue(component.center, axis.key) + " " + axis.unit,
-                    min: level.xMin,
-                    max: level.xMax,
-                    step: ranges.centerStep,
-                    fineStep: ranges.centerFineStep,
-                    value: component.center,
-                    onChange: (v) => handleUpdateComponent(component.id, "center", v),
-                  }),
-                  React.createElement(ParamSlider, {
-                    label: "Width σ",
-                    display: component.sigma.toFixed(3) + " " + axis.unit,
-                    note: describeWidth(component.sigma, component.center, axis.key),
-                    min: ranges.sigmaMin,
-                    max: ranges.sigmaMax,
-                    step: ranges.sigmaStep,
-                    fineStep: ranges.sigmaFineStep,
-                    value: component.sigma,
-                    onChange: (v) => handleUpdateComponent(component.id, "sigma", v),
-                  }),
-                  React.createElement(ParamSlider, {
-                    label: "Line-centre optical depth τ₀",
-                    display: component.tau.toFixed(2) + " — " + describeTau(component.tau),
-                    note:
-                      "dimensionless; thin gives a Gaussian, thick a flat saturated " +
-                      (absorb ? "core" : "top"),
-                    min: 0,
-                    max: 1000,
-                    step: 1,
-                    fineStep: 2,
-                    sliderValue: tauToSlider(component.tau),
-                    onSliderChange: (v) =>
-                      handleUpdateComponent(component.id, "tau", sliderToTau(v)),
-                    onNudge: (d) =>
-                      handleUpdateComponent(
-                        component.id,
-                        "tau",
-                        sliderToTau(
-                          Math.min(1000, Math.max(0, tauToSlider(component.tau) + d))
-                        )
-                      ),
-                  })
-                )
-              )
-            )
-          ),
-        React.createElement(
-          "p",
-          {
-            className:
-              "submit-check " + (centersReady ? "submit-check-ready" : "submit-check-pending"),
-          },
-          "Line centers: ",
-          liveWithinCount,
-          " / ",
-          liveGradedCount,
-          " within ",
-          level.errorThresholdPercent,
-          "%",
-          centersReady
-            ? " — ready to submit"
-            : " — green spectrum match is not enough; nudge each center"
-        ),
-        React.createElement(
-          "div",
-          { className: "button-row" },
-          React.createElement(
+          { className: "controls-header-right" },
+          h("span", { className: "count-label" }, t("linesCount", { n: components.length, max: maxComponents })),
+          h(
             "button",
-            { type: "button", className: "secondary-button", onClick: handleReset },
-            "Reset level"
-          ),
-          React.createElement(
-            "button",
-            {
-              type: "button",
-              className: "primary-button",
-              onClick: handleSubmit,
-              disabled: needsBaseline && !baselineLocked,
-              title:
-                needsBaseline && !baselineLocked
-                  ? "Lock the baseline first"
-                  : centersReady
-                    ? "Check your fit"
-                    : "You can still submit — we will show which centers need work",
-            },
-            "Submit fit"
+            { type: "button", className: "secondary-button", onClick: handleAddComponent, disabled: components.length >= maxComponents },
+            t("addLine")
           )
         )
+    ),
+    !linesOpen && h("p", { className: "phase-lock-hint" }, t("locked")),
+    linesOpen && h("p", { className: "step-text" }, t("clickHint")),
+    linesOpen &&
+      h(
+        "div",
+        { className: "component-list component-grid" },
+        components.map((component) =>
+          h(
+            "div",
+            {
+              key: component.id,
+              className: "gaussian-row" + (component.id === selectedId ? " gaussian-row-selected" : ""),
+              onClick: () => setSelectedId(component.id),
+            },
+            h(
+              "div",
+              { className: "gaussian-row-header" },
+              h(
+                "span",
+                null,
+                h("span", { className: "component-swatch", style: { background: componentColor(component) } }),
+                t("lineN", { n: component.id }),
+                component.id === selectedId ? h("span", { className: "selected-tag" }, t("selected")) : null,
+                (() => {
+                  const heat = heatOf(level, component.center);
+                  return h("span", { className: "heat heat-" + heat }, t(heat));
+                })()
+              ),
+              components.length > 1 &&
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "secondary-button tiny-button remove-line-button",
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      handleRemoveComponent(component.id);
+                    },
+                  },
+                  t("removeLine")
+                )
+            ),
+            h(ParamSlider, {
+              label: t("where"),
+              display: formatAxisValue(component.center, axis.key) + " " + axis.unit,
+              min: level.xMin,
+              max: level.xMax,
+              step: ranges.centerStep,
+              fineStep: ranges.centerFineStep,
+              value: component.center,
+              onChange: (v) => handleUpdateComponent(component.id, "center", v),
+            }),
+            h(ParamSlider, {
+              label: t(absorb ? "howDeep" : "howBright"),
+              display: formatAmplitude(level, component.amplitude),
+              min: ranges.amplitudeMin,
+              max: ranges.amplitudeMax,
+              step: ranges.amplitudeStep,
+              fineStep: ranges.amplitudeFineStep,
+              value: component.amplitude,
+              onChange: (v) => handleUpdateComponent(component.id, "amplitude", v),
+            }),
+            h(ParamSlider, {
+              label: t("howWide"),
+              display: component.sigma.toFixed(2) + " " + axis.unit,
+              min: ranges.sigmaMin,
+              max: ranges.sigmaMax,
+              step: ranges.sigmaStep,
+              fineStep: ranges.sigmaFineStep,
+              value: component.sigma,
+              onChange: (v) => handleUpdateComponent(component.id, "sigma", v),
+            }),
+            h(ParamSlider, {
+              label: t("howFull"),
+              display: component.tau.toFixed(1) + " · " + describeTau(component.tau, absorb),
+              min: 0,
+              max: 1000,
+              step: 1,
+              fineStep: 20,
+              value: tauToSlider(component.tau),
+              onChange: (v) => handleUpdateComponent(component.id, "tau", sliderToTau(v)),
+            })
+          )
+        )
+      ),
+    linesOpen &&
+      h(
+        "p",
+        { className: "submit-check " + (ready ? "submit-check-ready" : "submit-check-pending") },
+        t("foundCount", { n: liveWithin, total: nLines }),
+        t(ready ? "readyToCheck" : "keepGoing")
+      ),
+    h(
+      "div",
+      { className: "button-row" },
+      h("button", { type: "button", className: "secondary-button", onClick: handleReset }, t("reset")),
+      h(
+        "button",
+        { type: "button", className: "primary-button large-button", onClick: handleSubmit, disabled: !linesOpen || !components.length },
+        t("check")
       )
     )
+  );
+
+  return h(
+    "div",
+    { className: "game-layout" },
+    h(
+      "div",
+      { className: "panel plot-panel" },
+      h(
+        "div",
+        { className: "plot-header" },
+        h("div", { className: "panel-title" }, levelTitle(level)),
+        h(
+          "div",
+          { className: "plot-header-right" },
+          h(ModePill, { level }),
+          linesOpen &&
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button",
+                onClick: () => animateMixTo(mix > 0.5 ? 0 : 1),
+                "aria-pressed": mix > 0.5,
+              },
+              t(mix > 0.5 ? "before" : "after")
+            )
+        )
+      ),
+      h("p", { className: "level-blurb" }, tx(level.blurb)),
+      h("div", { className: "plot-wrap" }, h("canvas", { ref: setChartCanvas, className: "plot-canvas" })),
+      linesOpen &&
+        h("div", { className: "fit-quality " + fitQuality.cls }, t("fitQuality", { label: fitQuality.label })),
+      h(
+        "div",
+        { className: "info-pills" },
+        h("div", { className: "metric-pill" }, nLines === 1 ? t("lineToFind") : t("linesToFind", { n: nLines })),
+        h("div", { className: "metric-pill" }, levelBandLabel(level))
+      )
+    ),
+    h("div", { className: "controls-column" }, h(Mascot, mascot), step1, step2)
+  );
+}
+
+/** A burst of CSS confetti for a solved level. */
+function Confetti() {
+  const pieces = React.useMemo(
+    () =>
+      Array.from({ length: 28 }, (_, i) => ({
+        left: Math.random() * 100 + "%",
+        animationDelay: Math.random() * 0.8 + "s",
+        background: COMPONENT_COLORS[i % COMPONENT_COLORS.length],
+        transform: "rotate(" + Math.round(Math.random() * 360) + "deg)",
+      })),
+    []
+  );
+  return h(
+    "div",
+    { className: "confetti", "aria-hidden": true },
+    pieces.map((style, i) => h("span", { key: i, style }))
   );
 }
 
 // ——— App ———
 
 function App() {
+  const [lang, setLangState] = React.useState(LANG);
   const [screen, setScreen] = React.useState("attract");
   const [levelIndex, setLevelIndex] = React.useState(0);
+  const [attempt, setAttempt] = React.useState(0);
   const [passedLevels, setPassedLevels] = React.useState(() => new Set());
-  const [completionModal, setCompletionModal] = React.useState(null);
+  const [modal, setModal] = React.useState(null);
   const [muted, setMuted] = React.useState(false);
   const [volume, setVolume] = React.useState(0.85);
   const [leaderboard, setLeaderboard] = React.useState(() => loadLeaderboard());
-  const [showWhyScale, setShowWhyScale] = React.useState(false);
+  const [stickers, setStickers] = React.useState(() => loadStickers());
   const [playerName, setPlayerName] = React.useState("");
   const [leaderboardMsg, setLeaderboardMsg] = React.useState("");
   const [audioStatus, setAudioStatus] = React.useState("");
   const idleTimerRef = React.useRef(null);
 
-  React.useEffect(() => {
-    setMasterMuted(muted);
-  }, [muted]);
+  React.useEffect(() => setLang(lang), [lang]);
 
-  React.useEffect(() => {
-    setMasterVolume(volume);
-  }, [volume]);
+  // t() reads the module-level LANG while rendering, so it must change before the re-render.
+  function changeLang(l) {
+    setLang(l);
+    setLangState(l);
+  }
+  React.useEffect(() => setMasterMuted(muted), [muted]);
+  React.useEffect(() => setMasterVolume(volume), [volume]);
+
+  function clearModal() {
+    stopAllAudio();
+    setModal(null);
+    setPlayerName("");
+    setLeaderboardMsg("");
+    setAudioStatus("");
+  }
 
   const resetIdle = React.useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     idleTimerRef.current = setTimeout(() => {
-      stopAllAudio();
-      setCompletionModal(null);
-      setPlayerName("");
-      setLeaderboardMsg("");
-      setAudioStatus("");
+      clearModal();
       setLevelIndex(0);
       setScreen("attract");
     }, IDLE_MS);
@@ -3226,733 +2855,384 @@ function App() {
   }, [resetIdle]);
 
   function handleResetLeaderboard() {
-    const ok = window.confirm(
-      "Reset the leaderboard on this device? All named scores for every level will be deleted."
-    );
-    if (!ok) return;
-    setLeaderboard(clearLeaderboard());
+    if (window.confirm(t("resetConfirm"))) {
+      setLeaderboard(clearLeaderboard());
+      setStickers([]);
+    }
   }
 
-  async function handleStart(startIndex) {
-    const idx = Number.isInteger(startIndex) && LEVELS[startIndex] ? startIndex : 0;
-    await ensureAudioReady();
+  function goToLevel(idx) {
+    clearModal();
+    // Unlock audio on this click, but never wait for it: resume() can stay pending forever.
+    ensureAudioReady();
+    setLevelIndex(LEVELS[idx] ? idx : 0);
+    setAttempt((a) => a + 1);
     setScreen("play");
-    setLevelIndex(idx);
-    setCompletionModal(null);
-    setPlayerName("");
-    setLeaderboardMsg("");
-    setAudioStatus("");
-    resetIdle();
   }
 
   function handleLevelCompleted(summary) {
-    if (summary && summary.passed) {
-      setPassedLevels((prev) => {
-        const next = new Set(prev);
-        next.add(summary.levelId);
-        return next;
-      });
+    let newStickers = [];
+    if (summary.passed) {
+      setPassedLevels((prev) => new Set(prev).add(summary.levelId));
+      const got = addStickers(levelSpecies(levelById(summary.levelId)));
+      setStickers(got.all);
+      newStickers = got.fresh;
     }
-    setPlayerName("");
-    setLeaderboardMsg("");
-    setAudioStatus("");
-    setCompletionModal(summary);
-    resetIdle();
-  }
-
-  function handleKeepFitting() {
-    stopAllAudio();
-    setCompletionModal(null);
-    setShowWhyScale(false);
-    setPlayerName("");
-    setLeaderboardMsg("");
-    setAudioStatus("");
-    resetIdle();
+    clearModal();
+    playSfx(summary.passed ? "win" : "miss");
+    setModal({ ...summary, newStickers });
   }
 
   function handleSaveToLeaderboard() {
-    if (!completionModal) return;
-    const result = saveLeaderboardEntry(
-      completionModal.levelId,
-      playerName,
-      completionModal.mse,
-      completionModal.meanErr,
-      completionModal.stars
-    );
-    setLeaderboard(result.board);
     if (!sanitizePlayerName(playerName)) {
-      setLeaderboardMsg("Enter a name (max " + MAX_NAME_LEN + " characters) to save.");
+      setLeaderboardMsg(t("enterName", { max: MAX_NAME_LEN }));
       return;
     }
-    if (result.accepted) {
-      setLeaderboardMsg("Saved! Rank #" + result.rank + " on Level " + completionModal.levelId + ".");
-    } else {
-      setLeaderboardMsg("Nice try — not quite in the top " + LEADERBOARD_TOP_N + " for this level yet.");
-    }
-  }
-
-  function downloadCompletionCSV() {
-    if (!completionModal || !completionModal.lineErrors) return;
-    const axisKey = completionModal.axis || "GHz";
-    const unit = axisByKey(axisKey).unit;
-    const rows = [];
-    rows.push(["Level", completionModal.levelId]);
-    rows.push(["Level name", completionModal.levelName]);
-    rows.push(["Line mode", completionModal.mode || "emission"]);
-    rows.push(["Spectral unit", unit]);
-    rows.push(["Passed", completionModal.passed ? "yes" : "no"]);
-    rows.push(["MSE", String(Number.isFinite(completionModal.mse) ? completionModal.mse.toFixed(6) : "")]);
-    rows.push([
-      "Mean error %",
-      String(Number.isFinite(completionModal.meanErr) ? completionModal.meanErr.toFixed(4) : ""),
-    ]);
-    rows.push(["Stars", String(completionModal.stars || 0)]);
-    if (completionModal.sonification) {
-      rows.push(["Audio rule", completionModal.sonification.mode]);
-      rows.push(["Audio scale factor", String(completionModal.sonification.scaleFactor)]);
-    }
-    const absorbMode = completionModal.mode === "absorption";
-    const ampHeader = absorbMode ? "Depth (fraction)" : "Peak T_B (K)";
-    (completionModal.continuumResults || []).forEach((cr) => {
-      rows.push([
-        cr.label,
-        String(Number(cr.fitted).toFixed(cr.decimals)),
-        "truth " + Number(cr.truth).toFixed(cr.decimals) + (cr.unit ? " " + cr.unit : ""),
-      ]);
-    });
-    rows.push([]);
-    rows.push([
-      "True " + unit,
-      "Species",
-      "Scored",
-      "Fitted " + unit,
-      "Error (%)",
-      ampHeader,
-      "Sigma (" + unit + ")",
-      "Optical depth τ₀",
-      "Audible Hz",
-    ]);
-    const audible = (completionModal.sonification && completionModal.sonification.audibleHz) || [];
-    const lineRow = (le, audibleHz, scored) => {
-      const fitted = le.matchedGaussian;
-      return [
-        le.line.center.toFixed(6),
-        lineSpeciesLabel(le.line),
-        scored ? "yes" : "bonus",
-        fitted ? fitted.center.toFixed(6) : "",
-        le.percentError != null ? le.percentError.toFixed(4) : "",
-        fitted
-          ? absorbMode
-            ? (fitted.amplitude * 100).toFixed(1) + "%"
-            : fitted.amplitude.toFixed(4)
-          : "",
-        fitted ? fitted.sigma.toFixed(4) : "",
-        fitted ? fitted.tau.toFixed(3) : "",
-        audibleHz != null ? audibleHz.toFixed(2) : "",
-      ];
-    };
-    completionModal.lineErrors.forEach((le, idx) => {
-      rows.push(lineRow(le, audible[idx], true));
-    });
-    (completionModal.bonusErrors || []).forEach((le) => {
-      rows.push(lineRow(le, null, false));
-    });
-    const csv = rows
-      .map((r) =>
-        r
-          .map((c) => (/\s|,|"/.test(String(c)) ? '"' + String(c).replace(/"/g, '""') + '"' : c))
-          .join(",")
-      )
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "spectrum_fit_level_" + completionModal.levelId + ".csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  function handleNextLevel() {
-    stopAllAudio();
-    setCompletionModal(null);
-    setShowWhyScale(false);
-    setPlayerName("");
-    setLeaderboardMsg("");
-    setAudioStatus("");
-    setLevelIndex((prev) => {
-      const nextIdx = prev + 1;
-      return nextIdx < LEVELS.length ? nextIdx : prev;
-    });
-  }
-
-  function handleExitGame() {
-    stopAllAudio();
-    setCompletionModal(null);
-    setShowWhyScale(false);
-    setPlayerName("");
-    setLeaderboardMsg("");
-    setAudioStatus("");
-    setScreen("exit");
-  }
-
-  async function playLineAtIndex(idx) {
-    if (!completionModal || !completionModal.sonification) return;
-    const hz = completionModal.sonification.audibleHz[idx];
-    stopAllAudio();
-    const ok = await playTone(hz, 1.2, muted);
-    setAudioStatus(
-      ok
-        ? "Playing tone…"
-        : "Click Play again if you hear nothing — browsers block audio until a click."
+    const result = saveLeaderboardEntry(modal.levelId, playerName, modal.mse, modal.meanErr, modal.stars);
+    setLeaderboard(result.board);
+    setLeaderboardMsg(
+      result.accepted ? t("saved", { rank: result.rank, level: modal.levelId }) : t("notTop", { n: LEADERBOARD_TOP_N })
     );
   }
 
-  async function playAllLines() {
-    if (!completionModal || !completionModal.sonification) return;
-    const ok = await playChord(completionModal.sonification.audibleHz, 1.8, muted);
-    setAudioStatus(
-      ok
-        ? "Playing all lines…"
-        : "Click Play again if you hear nothing — browsers block audio until a click."
-    );
+  async function playLine(idx) {
+    stopAllAudio();
+    const ok = await playTone(modal.sonification.audibleHz[idx], 1.2, muted);
+    setAudioStatus(t(ok ? "playing" : "audioBlocked"));
+  }
+
+  async function playAll() {
+    const ok = await playChord(modal.sonification.audibleHz, 1.8, muted);
+    setAudioStatus(t(ok ? "playing" : "audioBlocked"));
   }
 
   const currentLevel = LEVELS[levelIndex];
-  const modalLevel = completionModal ? levelById(completionModal.levelId) : null;
-  const modalAxis = axisByKey(completionModal ? completionModal.axis : "GHz");
-  const modalAbsorb = completionModal && completionModal.mode === "absorption";
-  const modalPassed = !!(completionModal && completionModal.passed);
-  const modalThreshold =
-    (completionModal && completionModal.thresholdPercent) ||
-    (modalLevel && modalLevel.errorThresholdPercent) ||
-    5;
-  const modalAmpMeta = modalLevel ? amplitudeMeta(modalLevel) : null;
-  const modalBands = modalLevel ? starBandsForLevel(modalLevel) : null;
-  const knownFacts =
-    completionModal && completionModal.lineErrors
-      ? completionModal.lineErrors
-          .filter((le) => le.line.knownLine && le.line.label && MOLECULE_FACTS[le.line.label])
-          .map((le) => ({ label: le.line.label, fact: MOLECULE_FACTS[le.line.label] }))
-          .filter((item, i, arr) => arr.findIndex((x) => x.label === item.label) === i)
-      : [];
-  const hasUnknownLines =
-    completionModal &&
-    completionModal.lineErrors &&
-    completionModal.lineErrors.some((le) => !le.line.knownLine);
+  const modalLevel = modal ? levelById(modal.levelId) : null;
+  const modalAxis = modalLevel ? axisOf(modalLevel) : AXES.nm;
+  const facts = modalLevel ? levelSpecies(modalLevel) : [];
+  const modalMascot = !modal
+    ? null
+    : !modal.passed
+    ? { face: "🤔", text: t("mascotFailed") }
+    : modal.stars >= 5
+    ? { face: "🤩", text: t("mascotStars5") }
+    : modal.stars >= 3
+    ? { face: "😄", text: t("mascotStars3") }
+    : { face: "🙂", text: t("mascotStars1") };
 
-  return React.createElement(
-    "div",
-    { className: "app-shell kiosk" },
-    React.createElement(
-      "header",
-      { className: "app-header" },
-      React.createElement("div", { className: "title" }, "Spectrum Fitter"),
-      React.createElement(
-        "div",
-        { className: "header-right" },
-        screen === "play" &&
-          React.createElement(
-            "div",
-            { className: "level-select" },
-            TRACKS.map((track) =>
-              React.createElement(
-                "div",
-                { key: track.key, className: "level-group" },
-                React.createElement("span", { className: "level-group-label" }, track.label),
-                LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
-                  const idx = LEVELS.indexOf(lvl);
-                  return React.createElement(
-                    "button",
-                    {
-                      key: lvl.id,
-                      type: "button",
-                      title: lvl.name,
-                      className:
-                        "level-button " +
-                        (idx === levelIndex ? "active" : "") +
-                        (passedLevels.has(lvl.id) ? " completed" : ""),
-                      onClick: () => {
-                        stopAllAudio();
-                        setCompletionModal(null);
-                        setLevelIndex(idx);
-                      },
-                    },
-                    "L",
-                    lvl.id,
-                    passedLevels.has(lvl.id) ? " ✓" : ""
-                  );
-                })
-              )
+  const header = h(
+    "header",
+    { className: "app-header" },
+    h("div", { className: "title" }, screen === "attract" ? "" : "🔭 " + t("appTitle")),
+    h(
+      "div",
+      { className: "header-right" },
+      screen === "play" &&
+        h(
+          "div",
+          { className: "level-select" },
+          TRACKS.map((track) =>
+            h(
+              "div",
+              { key: track.key, className: "level-group" },
+              h("span", { className: "level-group-label" }, t(track.label)),
+              LEVELS.filter((lvl) => lvl.track === track.key).map((lvl) => {
+                const idx = LEVELS.indexOf(lvl);
+                return h(
+                  "button",
+                  {
+                    key: lvl.id,
+                    type: "button",
+                    title: levelTitle(lvl),
+                    className:
+                      "level-button" + (idx === levelIndex ? " active" : "") + (passedLevels.has(lvl.id) ? " completed" : ""),
+                    onClick: () => goToLevel(idx),
+                  },
+                  lvl.id,
+                  passedLevels.has(lvl.id) ? " ✓" : ""
+                );
+              })
             )
-          ),
-        React.createElement(
-          "label",
-          { className: "volume-control" },
-          React.createElement("span", null, "Vol"),
-          React.createElement("input", {
-            type: "range",
-            min: 0,
-            max: 100,
-            value: Math.round(volume * 100),
-            className: "volume-slider",
-            disabled: muted,
-            onChange: (e) => setVolume(parseInt(e.target.value, 10) / 100),
-            "aria-label": "Volume",
-          })
+          )
         ),
-        React.createElement(
+      h(LangToggle, { lang, onChange: changeLang }),
+      h(
+        "label",
+        { className: "volume-control" },
+        h("span", null, t("vol")),
+        h("input", {
+          type: "range",
+          min: 0,
+          max: 100,
+          value: Math.round(volume * 100),
+          className: "volume-slider",
+          disabled: muted,
+          onChange: (e) => setVolume(parseInt(e.target.value, 10) / 100),
+          "aria-label": t("volume"),
+        })
+      ),
+      h(
+        "button",
+        { type: "button", className: "secondary-button mute-button", onClick: () => setMuted((m) => !m), "aria-pressed": muted },
+        t(muted ? "unmute" : "mute")
+      ),
+      (screen === "play" || screen === "quiz") &&
+        h(
           "button",
           {
             type: "button",
-            className: "secondary-button mute-button",
-            onClick: () => setMuted((m) => !m),
-            "aria-pressed": muted,
+            className: "secondary-button",
+            onClick: () => {
+              clearModal();
+              setScreen("attract");
+            },
           },
-          muted ? "Unmute" : "Mute"
+          t("home")
+        )
+    )
+  );
+
+  const modalView =
+    modal &&
+    h(
+      "div",
+      { className: "modal-backdrop" },
+      modal.passed && h(Confetti),
+      h(
+        "div",
+        { className: "modal-content modal-content-wide" },
+        h("div", { className: "panel-title modal-title" }, t(modal.passed ? "greatJob" : "almost")),
+        h(Mascot, modalMascot),
+        h(
+          "p",
+          { className: "modal-lead" },
+          modal.passed
+            ? t("passedLead", { n: modal.levelId, name: tx(modalLevel.name) })
+            : t("failedLead", { n: modal.withinCount, total: modal.gradedCount })
         ),
-        screen === "play" &&
-          React.createElement(
+        modal.passed && h("div", { className: "modal-score-row" }, h(StarsDisplay, { stars: modal.stars })),
+        h(
+          "div",
+          { className: "modal-table-wrap" },
+          h(
+            "table",
+            { className: "lines-table modal-lines-table" },
+            h(
+              "thead",
+              null,
+              h(
+                "tr",
+                null,
+                h("th", null, t("theLine")),
+                modal.passed && h("th", null, t("realPlace")),
+                h("th", null, t("yourPlace")),
+                h("th", null, t("ok")),
+                modal.passed && h("th", null, t("hear"))
+              )
+            ),
+            h(
+              "tbody",
+              null,
+              modal.lineErrors.map((le, idx) =>
+                h(
+                  "tr",
+                  { key: idx },
+                  h("td", null, lineSpeciesLabel(le.line)),
+                  modal.passed && h("td", null, formatAxisValue(le.line.center, modalAxis.key) + " " + modalAxis.unit),
+                  h(
+                    "td",
+                    null,
+                    le.matchedGaussian ? formatAxisValue(le.matchedGaussian.center, modalAxis.key) + " " + modalAxis.unit : "—"
+                  ),
+                  h("td", { className: "ok-cell" }, lineWithinThreshold(le, modal.thresholdPercent) ? "✅" : "❌"),
+                  modal.passed &&
+                    h(
+                      "td",
+                      null,
+                      h(
+                        "button",
+                        { type: "button", className: "secondary-button tiny-button", onClick: () => playLine(idx), disabled: muted },
+                        t("play")
+                      )
+                    )
+                )
+              )
+            )
+          )
+        ),
+        modal.passed &&
+          h(
+            "div",
+            { className: "sonify-panel" },
+            h(
+              "div",
+              { className: "sonify-header" },
+              h("strong", null, t("hearYourFit")),
+              h("button", { type: "button", className: "primary-button", onClick: playAll, disabled: muted }, t("playAll"))
+            ),
+            h("p", { className: "sonify-scale" }, describeSonifyRule(modal.sonification)),
+            audioStatus && h("p", { className: "audio-status" }, audioStatus)
+          ),
+        modal.passed &&
+          facts.length > 0 &&
+          h(
+            "div",
+            { className: "fact-cards" },
+            h("div", { className: "panel-title" }, t("facts")),
+            facts.map((label) =>
+              h(
+                "div",
+                { key: label, className: "fact-card" + (modal.newStickers.includes(label) ? " fact-card-new" : "") },
+                h("span", { className: "sticker-emoji", "aria-hidden": true }, SPECIES[label].emoji),
+                h("strong", null, tx(SPECIES[label].nick), " · ", tx(SPECIES[label].name)),
+                modal.newStickers.includes(label) && h("span", { className: "new-sticker" }, t("newSticker")),
+                h("p", null, tx(SPECIES[label].fact))
+              )
+            )
+          ),
+        modal.passed &&
+          h(
+            "div",
+            { className: "name-save-row" },
+            h(
+              "label",
+              { className: "name-label" },
+              t("yourName"),
+              h("input", {
+                type: "text",
+                className: "name-input",
+                maxLength: MAX_NAME_LEN,
+                placeholder: t("yourName"),
+                value: playerName,
+                onChange: (e) => setPlayerName(e.target.value),
+              })
+            ),
+            h("button", { type: "button", className: "primary-button", onClick: handleSaveToLeaderboard }, t("saveName"))
+          ),
+        modal.passed && leaderboardMsg && h("p", { className: "leaderboard-msg" }, leaderboardMsg),
+        h(
+          "div",
+          { className: "modal-actions" },
+          h(
             "button",
             {
               type: "button",
               className: "secondary-button",
               onClick: () => {
-                stopAllAudio();
-                setCompletionModal(null);
-                setScreen("attract");
+                clearModal();
+                setScreen("exit");
               },
             },
-            "Home"
-          )
+            t("exit")
+          ),
+          modal.passed
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  className: "primary-button large-button",
+                  onClick: () => {
+                    if (levelIndex + 1 < LEVELS.length) goToLevel(levelIndex + 1);
+                    else {
+                      clearModal();
+                      setScreen("attract");
+                    }
+                  },
+                },
+                t(levelIndex + 1 < LEVELS.length ? "nextLevel" : "lastLevel")
+              )
+            : h("button", { type: "button", className: "primary-button large-button", onClick: clearModal }, t("tryAgain"))
+        )
       )
-    ),
+    );
+
+  return h(
+    "div",
+    { className: "app-shell kiosk" },
+    header,
     screen === "attract" &&
-      React.createElement(AttractScreen, {
-        onStart: () => handleStart(0),
-        onPlayLevel: (idx) => handleStart(idx),
+      h(AttractScreen, {
+        onStart: () => goToLevel(0),
+        onPlayLevel: goToLevel,
+        onQuiz: () => {
+          ensureAudioReady();
+          setScreen("quiz");
+        },
         board: leaderboard,
+        passedLevels,
+        stickers,
         onResetLeaderboard: handleResetLeaderboard,
       }),
     screen === "exit" &&
-      React.createElement(
+      h(
         "main",
         null,
-        React.createElement(
+        h(
           "div",
           { className: "panel exit-panel" },
-          React.createElement("div", { className: "panel-title" }, "Thanks for playing!"),
-          React.createElement(
-            "p",
-            { className: "exit-copy" },
-            "Come back anytime — or press Home / Start to play again."
-          ),
-          React.createElement(
-            "button",
-            {
-              type: "button",
-              className: "primary-button large-button",
-              onClick: () => setScreen("attract"),
-            },
-            "Back to start"
-          )
+          h("div", { className: "panel-title" }, t("thanks")),
+          h("p", { className: "exit-copy" }, t("thanksText")),
+          h("button", { type: "button", className: "primary-button large-button", onClick: () => setScreen("attract") }, t("backToStart"))
         )
       ),
+    screen === "quiz" && h(QuizScreen, { muted }),
     screen === "play" &&
-      React.createElement(
+      h(
         "main",
         null,
-        React.createElement(SpectrumGameView, {
-          key: currentLevel.id,
+        h(SpectrumGameView, {
+          key: currentLevel.id + "-" + attempt,
           level: currentLevel,
+          lang,
           onCompletion: handleLevelCompleted,
         })
       ),
-    completionModal &&
-      React.createElement(
-        "div",
-        { className: "modal-backdrop" },
-        React.createElement(
-          "div",
-          { className: "modal-content modal-content-wide" },
-          React.createElement(
-            "div",
-            { className: "panel-title" },
-            modalPassed ? "Congratulations!" : "Not quite yet"
-          ),
-          React.createElement(
-            "p",
-            { className: "modal-lead" },
-            modalPassed
-              ? "You passed Level " +
-                completionModal.levelId +
-                " — " +
-                (completionModal.levelName || "")
-              : "Level " +
-                completionModal.levelId +
-                " needs every scored line within " +
-                modalThreshold +
-                "% in " +
-                modalAxis.unit +
-                ". Right now " +
-                (completionModal.withinCount != null ? completionModal.withinCount : "—") +
-                " of " +
-                (completionModal.gradedCount != null ? completionModal.gradedCount : "—") +
-                " are close enough."
-          ),
-          !modalPassed &&
-            React.createElement(
-              "p",
-              { className: "modal-hint modal-hint-warn" },
-              "A green “spectrum match” means the whole curve looks similar — pass still checks each line centre. Nudge the off lines in the table below, then Submit again."
-            ),
-          React.createElement(
-            "div",
-            { className: "modal-score-row" },
-            modalPassed && React.createElement(StarsDisplay, { stars: completionModal.stars }),
-            React.createElement(
-              "span",
-              null,
-              "Mean center error ",
-              Number.isFinite(completionModal.meanErr)
-                ? completionModal.meanErr.toFixed(2)
-                : "—",
-              "% · Spectrum mismatch ",
-              Number.isFinite(completionModal.fitPct)
-                ? completionModal.fitPct.toFixed(1)
-                : "—",
-              "%"
-            )
-          ),
-          modalPassed &&
-            React.createElement(
-              "p",
-              { className: "modal-hint" },
-              "Stars use the mean center error (not raw MSE), scaled to this level: 5★ needs ≤",
-              modalBands ? modalBands[0].toPrecision(2) : "0.05",
-              "% — keep refining for the leaderboard!"
-            ),
-          modalPassed &&
-            completionModal.continuumResults &&
-            completionModal.continuumResults.length > 0 &&
-            React.createElement(
-              "div",
-              { className: "modal-continuum" },
-              React.createElement(
-                "div",
-                { className: "panel-title" },
-                "Continuum you measured"
-              ),
-              completionModal.continuumResults.map((cr, idx) => {
-                const fitted = Number(cr.fitted);
-                const truth = Number(cr.truth);
-                const errPct =
-                  truth !== 0 ? (Math.abs(fitted - truth) / Math.abs(truth)) * 100 : NaN;
-                return React.createElement(
-                  "p",
-                  { key: idx, className: "modal-hint" },
-                  cr.label,
-                  ": ",
-                  fitted.toFixed(cr.decimals),
-                  cr.unit ? " " + cr.unit : "",
-                  " (truth ",
-                  truth.toFixed(cr.decimals),
-                  cr.unit ? " " + cr.unit : "",
-                  Number.isFinite(errPct) ? ", " + errPct.toFixed(1) + "% off" : "",
-                  ")"
-                );
-              })
-            ),
-          modalPassed &&
-            React.createElement(
-              "div",
-              { className: "name-save-row" },
-              React.createElement(
-                "label",
-                { className: "name-label" },
-                "Your name",
-                React.createElement("input", {
-                  type: "text",
-                  className: "name-input",
-                  maxLength: MAX_NAME_LEN,
-                  placeholder: "Your name",
-                  value: playerName,
-                  onChange: (e) => setPlayerName(e.target.value),
-                })
-              ),
-              React.createElement(
-                "button",
-                {
-                  type: "button",
-                  className: "primary-button",
-                  onClick: handleSaveToLeaderboard,
-                },
-                "Save to leaderboard"
-              )
-            ),
-          modalPassed &&
-            leaderboardMsg &&
-            React.createElement("p", { className: "leaderboard-msg" }, leaderboardMsg),
-          completionModal.lineErrors &&
-            completionModal.lineErrors.length > 0 &&
-            React.createElement(
-              "div",
-              { className: "modal-table-wrap" },
-              React.createElement(
-                "table",
-                { className: "lines-table modal-lines-table" },
-                React.createElement(
-                  "thead",
-                  null,
-                React.createElement(
-                  "tr",
-                  null,
-                  React.createElement("th", null, "True (" + modalAxis.unit + ")"),
-                  React.createElement("th", null, modalAxis.key === "nm" ? "Element" : "Molecule"),
-                  React.createElement("th", null, "Fitted (" + modalAxis.unit + ")"),
-                  React.createElement("th", null, "Audible Hz"),
-                  React.createElement("th", { className: "error-cell" }, "Error %"),
-                  React.createElement(
-                    "th",
-                    null,
-                    modalAbsorb ? "Depth" : "T_B (K)"
-                  ),
-                  React.createElement("th", null, "σ (" + modalAxis.unit + ")"),
-                  React.createElement("th", null, "τ₀"),
-                  React.createElement("th", null, "Hear")
-                )
-                ),
-                React.createElement(
-                  "tbody",
-                  null,
-                  completionModal.lineErrors.map((le, idx) => {
-                    const audible =
-                      completionModal.sonification &&
-                      completionModal.sonification.audibleHz &&
-                      completionModal.sonification.audibleHz[idx];
-                    return React.createElement(
-                      "tr",
-                      { key: idx },
-                      React.createElement(
-                        "td",
-                        null,
-                        formatAxisValue(le.line.center, modalAxis.key)
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        le.line.knownLine
-                          ? le.line.transition
-                            ? le.line.label + " " + le.line.transition
-                            : le.line.label || "—"
-                          : "Unknown line"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        le.matchedGaussian
-                          ? formatAxisValue(le.matchedGaussian.center, modalAxis.key)
-                          : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        audible != null && isFinite(audible) ? audible.toFixed(1) : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        {
-                          className:
-                            "error-cell" +
-                            (lineWithinThreshold(le, modalThreshold) ? "" : " error-over"),
-                        },
-                        le.percentError != null ? le.percentError.toFixed(3) : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        le.matchedGaussian
-                          ? modalAmpMeta
-                            ? modalAmpMeta.format(le.matchedGaussian.amplitude)
-                            : le.matchedGaussian.amplitude.toFixed(3)
-                          : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        le.matchedGaussian
-                          ? le.matchedGaussian.sigma.toFixed(3) + " " + modalAxis.unit
-                          : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        le.matchedGaussian ? le.matchedGaussian.tau.toFixed(2) : "—"
-                      ),
-                      React.createElement(
-                        "td",
-                        null,
-                        React.createElement(
-                          "button",
-                          {
-                            type: "button",
-                            className: "secondary-button tiny-button",
-                            onClick: () => playLineAtIndex(idx),
-                            disabled: muted,
-                          },
-                          "Play"
-                        )
-                      )
-                    );
-                })
-              )
-            )
-          ),
-          modalPassed &&
-            completionModal.extraLineCount > 0 &&
-            React.createElement(
-              "p",
-              { className: "modal-bonus" },
-              describeBonusLines(completionModal)
-            ),
-          modalPassed &&
-            completionModal.sonification &&
-            React.createElement(
-              "div",
-              { className: "sonify-panel" },
-              React.createElement(
-                "div",
-                { className: "sonify-header" },
-                React.createElement("strong", null, "Hear your fit"),
-                React.createElement(
-                  "button",
-                  {
-                    type: "button",
-                    className: "primary-button",
-                    onClick: playAllLines,
-                    disabled: muted,
-                  },
-                  "Play all lines"
-                )
-              ),
-              React.createElement(
-                "p",
-                { className: "sonify-scale" },
-                describeSonifyRule(completionModal.sonification)
-              ),
-              completionModal.sonification.mode === "ratio" &&
-                React.createElement(
-                  "p",
-                  { className: "sonify-scale" },
-                  "This window is wide enough that no exaggeration is needed: the whole spectrum lands between ",
-                  Math.round(completionModal.sonification.windowAudibleHz[0]),
-                  " and ",
-                  Math.round(completionModal.sonification.windowAudibleHz[1]),
-                  " Hz, and the intervals you hear are the real ones."
-                ),
-              audioStatus &&
-                React.createElement("p", { className: "audio-status" }, audioStatus),
-              React.createElement(
-                "button",
-                {
-                  type: "button",
-                  className: "linkish-button",
-                  onClick: () => setShowWhyScale((v) => !v),
-                },
-                showWhyScale
-                  ? "Hide: How do we turn these lines into sound?"
-                  : "How do we turn these lines into sound?"
-              ),
-              showWhyScale &&
-                React.createElement(
-                  "div",
-                  { className: "why-scale-box" },
-                  React.createElement(
-                    "p",
-                    null,
-                    "Spectral lines vibrate far too fast for human ears: radio lines sit at tens or hundreds of gigahertz, and visible light at hundreds of terahertz. We only hear roughly 20 Hz to 20,000 Hz."
-                  ),
-                  React.createElement(
-                    "p",
-                    null,
-                    "When a spectrum covers a wide range — like HEXOS Band 1a from 480 to 560 GHz, or the whole rainbow from red to violet — we can simply divide every frequency by one big number. The notes then sit in the true ratios of the real lines, so a factor of two in frequency really is an octave."
-                  ),
-                  React.createElement(
-                    "p",
-                    null,
-                    "In a narrow window that trick fails: 88.6 GHz and 89.2 GHz divided by the same number would land about 1 Hz apart and sound identical. For those levels we stretch the gaps instead, roughly ",
-                    SONIFY_HZ_PER_GHZ,
-                    " Hz of pitch for every 1 GHz of separation, so you can still tell the lines apart."
-                  ),
-                  React.createElement(
-                    "p",
-                    null,
-                    "Either way this is a sonification for outreach, not a recording of the wave itself — so visitors can experience that different species sit at different frequencies."
-                  )
-                )
-            ),
-          modalPassed &&
-            (knownFacts.length > 0 || hasUnknownLines) &&
-            React.createElement(
-              "div",
-              { className: "fact-cards" },
-              React.createElement(
-                "div",
-                { className: "panel-title" },
-                modalAxis.key === "nm" ? "Element facts" : "Molecule facts"
-              ),
-              knownFacts.map((f) =>
-                React.createElement(
-                  "div",
-                  { key: f.label, className: "fact-card" },
-                  React.createElement("strong", null, f.label),
-                  React.createElement("p", null, f.fact)
-                )
-              ),
-              hasUnknownLines &&
-                React.createElement(
-                  "div",
-                  { className: "fact-card fact-card-unknown" },
-                  React.createElement("strong", null, "Unknown line"),
-                  React.createElement(
-                    "p",
-                    null,
-                    "One or more lines in this spectrum are unmarked — keep exploring CDMS and astronomy catalogs to identify them."
-                  )
-                )
-            ),
-          React.createElement(CdmsLearnMore, { solar: modalAxis.key === "nm" }),
-          React.createElement(
-            "div",
-            { className: "modal-actions" },
-            React.createElement(
-              "button",
-              { type: "button", className: "secondary-button", onClick: downloadCompletionCSV },
-              "Save as CSV"
-            ),
-            React.createElement(
-              "button",
-              { type: "button", className: "secondary-button", onClick: handleExitGame },
-              "Exit game"
-            ),
-            modalPassed
-              ? React.createElement(
-                  "button",
-                  { type: "button", className: "primary-button", onClick: handleNextLevel },
-                  completionModal.levelId < LEVELS.length ? "Next level" : "Stay on last level"
-                )
-              : React.createElement(
-                  "button",
-                  { type: "button", className: "primary-button", onClick: handleKeepFitting },
-                  "Keep fitting"
-                )
-          )
-        )
-      )
+    modalView
   );
 }
 
-const rootEl = document.getElementById("root");
-if (rootEl) {
-  const root = ReactDOM.createRoot(rootEl);
-  root.render(React.createElement(App));
+// ——— Self-check: `node main.js`, or open index.html?selftest and read the console ———
+
+function selfTest() {
+  const assert = (ok, msg) => {
+    if (!ok) throw new Error("selfTest: " + msg);
+  };
+  assert(LEVELS.length === 10, "ten levels");
+  LEVELS.forEach((level) => {
+    assert(level.trueLines.length <= 3, "L" + level.id + " shows at most 3 features");
+    level.trueLines.forEach((l) => assert(l.center > level.xMin && l.center < level.xMax, "L" + level.id + " line inside window"));
+    const spectrum = generateSpectrum(level);
+    const science = scienceLinesOf(level.trueLines);
+    const fit = autoFitBaseline(spectrum, level, continuumDefaults(level), seedTelluricComponents(level));
+    const res = (c, tel) => baselineResidualPercent(spectrum, c, tel, science, level.mode, level.xMin, level.xMax);
+    const truth = res(level.continuum, telluricLinesOf(level.trueLines));
+    const got = res(fit.continuum, fit.tellurics);
+    assert(got <= truth * 1.1 + 0.2, "L" + level.id + " auto-fit residual " + got.toFixed(2) + " vs truth " + truth.toFixed(2));
+    const tol = (level.errorThresholdPercent / 100) * ((level.xMin + level.xMax) / 2);
+    const shifted = (k) => science.map((l, i) => ({ ...l, id: i + 1, center: l.center + k * tol }));
+    const within = (comps) => countLinesWithin(computeLineErrors(science, comps), level.errorThresholdPercent);
+    assert(within(shifted(0.5)) === science.length, "L" + level.id + " half-tolerance offsets pass");
+    assert(within(shifted(2)) === 0, "L" + level.id + " double-tolerance offsets fail");
+    assert(tx(level.name) && level.name.de && level.blurb.de, "L" + level.id + " has German text");
+    science.forEach((l) => assert(SPECIES[l.label], "L" + level.id + " species " + l.label + " has a name"));
+    science.forEach((l) => assert(heatOf(level, l.center) === "hot", "L" + level.id + " exact centre is hot"));
+    assert(heatOf(level, level.xMin - (level.xMax - level.xMin)) === "cold", "L" + level.id + " far away is cold");
+  });
+  Object.keys(STRINGS.en).forEach((k) => assert(STRINGS.de[k] != null, "German string for " + k));
+  [TAU_MIN, 1, 8, TAU_MAX].forEach((tau) => assert(Math.abs(sliderToTau(tauToSlider(tau)) - tau) < 1e-9 * tau + 1e-12, "tau slider round-trips " + tau));
+  Object.keys(SPECIES).forEach((k) => assert(SPECIES[k].emoji && SPECIES[k].nick.de, "sticker for " + k));
+  for (let i = 0; i < 50; i++) {
+    const round = newQuizRound();
+    const lines = levelById(round.levelId).trueLines;
+    assert(lines.filter((l) => l.label === lines[round.target].label).length === 1, "quiz answer is unambiguous");
+  }
+  console.log("selfTest: all " + LEVELS.length + " levels OK");
+}
+
+if (typeof document === "undefined") {
+  selfTest();
+} else {
+  const rootEl = document.getElementById("root");
+  if (rootEl) ReactDOM.createRoot(rootEl).render(h(App));
+  if (/[?&]selftest/.test(location.search)) selfTest();
 }

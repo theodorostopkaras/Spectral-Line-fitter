@@ -3,8 +3,8 @@
 }
 
 html {
-  /* Bump the rem root so every rem-based label, pill and button reads a bit larger. */
-  font-size: 112.5%;
+  /* Kids' edition: a bigger rem root so every label, pill and button is easy to read. */
+  font-size: 125%;
 }
 
 body {
@@ -1189,4 +1189,475 @@ body {
   font-size: 0.9rem;
   opacity: 0.85;
   margin-bottom: 14px;
+}
+
+/* ——— Kids' edition ——— */
+
+.lang-toggle {
+  display: inline-flex;
+  border: 1px solid rgba(120, 120, 200, 0.7);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.lang-button {
+  background: transparent;
+  color: #e5e5ff;
+  border: none;
+  padding: 8px 14px;
+  min-height: 40px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lang-button.active {
+  background: linear-gradient(135deg, #21c3ff, #8b5bff);
+  color: #050510;
+}
+
+.controls-column > .step-panel:first-child {
+  flex: 0 0 auto;
+}
+
+.controls-column > .step-panel:last-child {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.step-panel .panel-title {
+  font-size: 1.1rem;
+}
+
+.step-text {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+
+.step-atmos {
+  color: #fdba74;
+}
+
+.step-good {
+  color: #6ee7b7;
+  font-weight: 600;
+}
+
+.step-done {
+  border-color: rgba(52, 211, 153, 0.7);
+}
+
+.step-locked {
+  opacity: 0.6;
+}
+
+.thinking {
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-title {
+  font-size: 1.5rem;
+}
+
+.modal-lines-table {
+  font-size: 0.9rem;
+}
+
+.ok-cell {
+  text-align: center;
+}
+
+.confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 60;
+}
+
+.confetti span {
+  position: absolute;
+  top: -20px;
+  width: 10px;
+  height: 16px;
+  border-radius: 2px;
+  animation: confetti-fall 2.6s ease-in forwards;
+}
+
+@keyframes confetti-fall {
+  to {
+    top: 110vh;
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none;
+  }
+
+  .thinking {
+    animation: none;
+  }
+}
+
+/* ——— Mascot ——— */
+.mascot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mascot-face {
+  font-size: 2.6rem;
+  line-height: 1;
+  animation: mascot-bounce 0.5s ease-out;
+}
+
+.mascot-bubble {
+  position: relative;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: #fef9c3;
+  color: #1e1b4b;
+  font-size: 0.9rem;
+}
+
+.mascot-bubble::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  margin-top: -8px;
+  border: 8px solid transparent;
+  border-left: 0;
+  border-right-color: #fef9c3;
+}
+
+@keyframes mascot-bounce {
+  0% { transform: scale(0.6) rotate(-10deg); }
+  60% { transform: scale(1.15) rotate(5deg); }
+  100% { transform: scale(1); }
+}
+
+/* ——— Warmer / colder ——— */
+.heat {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #0b1020;
+}
+
+.heat-hot { background: #f87171; }
+.heat-warm { background: #fb923c; }
+.heat-cool { background: #93c5fd; }
+.heat-cold { background: #bfdbfe; }
+
+/* ——— Stickers ——— */
+.sticker-count {
+  font-size: 0.8rem;
+  color: #fde68a;
+}
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.sticker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 2px dashed rgba(100, 116, 139, 0.6);
+  text-align: center;
+  font-size: 0.8rem;
+  opacity: 0.55;
+}
+
+.sticker-got {
+  border: 2px solid #fde68a;
+  background: rgba(253, 230, 138, 0.08);
+  opacity: 1;
+}
+
+.sticker-emoji {
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+.sticker-name {
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.sticker-fact {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  opacity: 0.9;
+}
+
+.fact-card .sticker-emoji {
+  float: left;
+  margin-right: 8px;
+}
+
+.fact-card-new {
+  border-color: #fde68a;
+}
+
+.new-sticker {
+  margin-left: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fde68a;
+}
+
+/* ——— Story map ——— */
+.journey {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.journey-chapter-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.journey-chapter-emoji {
+  font-size: 2rem;
+}
+
+.journey-chapter-desc {
+  display: block;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.journey-stops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  padding-left: 12px;
+}
+
+.map-stop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 140px;
+  padding: 6px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #f5f5ff;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Dashed road between two stops of the same chapter. */
+.map-stop + .map-stop::before {
+  content: "";
+  position: absolute;
+  top: 30px;
+  right: calc(50% + 30px);
+  width: 110px;
+  border-top: 3px dashed rgba(165, 180, 252, 0.6);
+}
+
+.map-stop:hover,
+.map-stop:focus-visible {
+  background: rgba(35, 35, 80, 0.8);
+}
+
+.map-stop-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 3px solid rgba(129, 140, 248, 0.9);
+  background: rgba(15, 23, 42, 0.95);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.map-stop-played .map-stop-dot {
+  border-color: #4ade80;
+  background: rgba(22, 101, 52, 0.6);
+}
+
+.map-stop-next .map-stop-dot {
+  border-color: #fde68a;
+  animation: stop-pulse 1.2s ease-in-out infinite;
+}
+
+.map-stop-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.map-stop-label {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.map-stop-next .map-stop-label {
+  opacity: 1;
+  color: #fde68a;
+}
+
+@keyframes stop-pulse {
+  50% { box-shadow: 0 0 0 10px rgba(253, 230, 138, 0.15); }
+}
+
+/* ——— Song quiz ——— */
+.quiz-panel {
+  max-width: 1000px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.quiz-strip {
+  position: relative;
+  width: 100%;
+  height: 170px;
+  border-radius: 12px;
+  border: 1px solid rgba(80, 80, 160, 0.6);
+}
+
+.quiz-strip-radio {
+  background: linear-gradient(to right, rgba(76, 29, 149, 0.5), rgba(30, 64, 175, 0.5));
+}
+
+.quiz-marker {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 130px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: rgba(10, 10, 30, 0.85);
+  color: #f5f5ff;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.quiz-marker-low {
+  top: 84px;
+}
+
+.quiz-marker-emoji {
+  font-size: 1.6rem;
+}
+
+.quiz-marker-wrong {
+  border-color: #f87171;
+  opacity: 0.6;
+}
+
+.quiz-marker-right {
+  border-color: #4ade80;
+  background: rgba(22, 101, 52, 0.85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-face,
+  .map-stop-next .map-stop-dot {
+    animation: none;
+  }
+}
+
+/* Quiz axis: light position on top, the note it becomes underneath. */
+.quiz-axis {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  margin-top: -6px;
+  border-top: 2px solid rgba(165, 180, 252, 0.8);
+}
+
+.quiz-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.quiz-tick::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  height: 6px;
+  border-left: 2px solid rgba(165, 180, 252, 0.8);
+}
+
+.quiz-tick:first-child {
+  transform: none;
+  align-items: flex-start;
+}
+
+.quiz-tick:last-child {
+  transform: translateX(-100%);
+  align-items: flex-end;
+}
+
+.quiz-tick-light {
+  color: #a5b4fc;
+}
+
+.quiz-tick-sound {
+  color: #fde68a;
+}
+
+.quiz-axis-titles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.75rem;
+}
+
+.quiz-tick:last-child::before {
+  right: 0;
 }
